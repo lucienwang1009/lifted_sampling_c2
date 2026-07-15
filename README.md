@@ -26,7 +26,7 @@ Compile once and reuse the sampler. `sample_many()` is an iterator, so it does
 not retain earlier structures.
 
 ```python
-from c2_wms import compile_sampler
+from c2_wms import compile_sampler, validate_structure
 from wfomc import parse_problem
 
 problem = parse_problem(r"""
@@ -37,11 +37,15 @@ domain = 20
 
 with compile_sampler(problem, seed=7) as sampler:
     for structure in sampler.sample_many(100):
+        validate_structure(problem, structure)  # opt-in diagnostic check
         print(structure.true_atoms())
 ```
 
 `SampledStructure.relation(name, arity)` returns the true tuples for one source
 predicate. Reduction predicates introduced by WFOMC are never exposed.
+`validate_structure(problem, structure)` directly checks the original formula,
+domain, evidence, cardinality constraints, nullary predicates, and `LEQ`. It is
+intended for tests and diagnostics, not the warm sampling path.
 
 Sampling requires concrete, exact, non-negative weights. This repository only
 supports WFOMC's exact arithmetic path; rounded arithmetic is deliberately out
@@ -54,6 +58,7 @@ measure. Unsatisfiable inputs raise `UnsatisfiableProblemError`.
 ```bash
 uv run wfoms --input model.wfomcs --samples 10 --seed 7
 uv run wfoms --input model.wfomcs --samples 10 --seed 7 --output samples.jsonl
+uv run wfoms --input model.wfomcs --samples 10 --validate --output samples.jsonl
 ```
 
 Without `--output`, the CLI writes one JSON object per sampled structure to
@@ -67,6 +72,9 @@ including empty and nullary relations:
 
 One model per line keeps large runs streamable and allows processing with tools
 such as `jq`, Python, Polars, or DuckDB without loading the full sample set.
+`--validate` checks every structure against the original formula and problem
+metadata before writing it. It is disabled by default because formula
+interpretation and the cubic `LEQ` transitivity check are diagnostic work.
 
 ## Architecture and performance
 
@@ -94,3 +102,11 @@ and a warm-sampling regression:
 uv run pytest tests/unit tests/integration
 uv run pytest -m performance tests/performance
 ```
+
+## Model corpus
+
+[`models/`](models/README.md) contains 81 deduplicated `.wfomcs` inputs from
+WFOMC and `lifted_sampling_fo2` that successfully complete parse, compile,
+sampling, and diagnostic validation with the current implementation. The
+corpus README documents its categories, provenance, selection rule, and the
+command for rerunning the full compatibility check.

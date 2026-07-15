@@ -15,3 +15,7 @@ class UnsatisfiableProblemError(SamplingError):
 
 class WfomcCompatibilityError(SamplingError):
     """The pinned WFOMC internal contract differs from the expected shape."""
+
+
+class StructureValidationError(SamplingError):
+    """A sampled structure violates its source problem."""
