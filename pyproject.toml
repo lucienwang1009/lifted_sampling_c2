@@ -1,0 +1,51 @@
+[project]
+name = "c2-wms"
+version = "0.1.0"
+description = "Exact lifted weighted model sampling for general C2"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Lucien Wang" },
+]
+dependencies = [
+    "pysdd>=1.0.0",
+    "python-sat>=1.9.dev5",
+    "wfomc",
+]
+
+[project.scripts]
+wfoms = "c2_wms.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/c2_wms"]
+
+[tool.uv.sources]
+wfomc = { git = "https://github.com/yuanhong-wang/WFOMC.git", rev = "481230d668dd34051161f2ca41fa21f2f008af84" }
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.136.0",
+    "psutil>=7.0.0",
+    "pytest>=8.4.0",
+    "pytest-benchmark>=5.1.0",
+    "ruff>=0.12.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+markers = [
+    "performance: performance and scalability checks",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
