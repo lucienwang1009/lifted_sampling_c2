@@ -53,10 +53,20 @@ measure. Unsatisfiable inputs raise `UnsatisfiableProblemError`.
 
 ```bash
 uv run wfoms --input model.wfomcs --samples 10 --seed 7
+uv run wfoms --input model.wfomcs --samples 10 --seed 7 --output samples.jsonl
 ```
 
-The CLI writes one JSON object per sampled structure, which makes large runs
-streamable.
+Without `--output`, the CLI writes one JSON object per sampled structure to
+standard output. With `--output/-o`, it saves the same JSON Lines stream to the
+given file. Each record contains the complete domain and every source relation,
+including empty and nullary relations:
+
+```json
+{"domain":["a","b"],"relations":[{"predicate":"P","arity":1,"tuples":[["a"]]}]}
+```
+
+One model per line keeps large runs streamable and allows processing with tools
+such as `jq`, Python, Polars, or DuckDB without loading the full sample set.
 
 ## Architecture and performance
 
