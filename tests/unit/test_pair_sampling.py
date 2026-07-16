@@ -11,6 +11,10 @@ def _anonymous_sample(source: str):
     return sampler, anonymous, sampler._pair_samplers[id(anonymous.trace)]
 
 
+def test_pair_sat_enumeration_limit_is_1024():
+    assert pair_sampling._SAT_MODEL_LIMIT == 1024
+
+
 def test_pair_sampler_reconstructs_projected_orientation():
     sampler, anonymous, pair_sampler = _anonymous_sample(r"""
 \forall X: (\exists_=1 Y: R(X,Y))

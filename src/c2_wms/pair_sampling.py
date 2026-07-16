@@ -20,7 +20,7 @@ from c2_wms.trace.kernel import projection_mask
 from c2_wms.trace.traceback import PairRequest
 
 WeightPair = tuple[object, object]
-_SAT_MODEL_LIMIT = 128
+_SAT_MODEL_LIMIT = 1024
 
 logger = logging.getLogger(__name__)
 
