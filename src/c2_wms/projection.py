@@ -8,6 +8,42 @@ from c2_wms.errors import SamplingError, UnsupportedSamplingInput
 from c2_wms.structure import PredicateKey, SampledStructure
 
 
+def projection_metadata(
+    trace,
+    source_keys: tuple[PredicateKey, ...],
+) -> tuple[
+    tuple[tuple[tuple[PredicateKey, int], ...], ...],
+    tuple[PredicateKey, ...],
+    tuple[tuple[PredicateKey, bool] | None, ...],
+]:
+    """Precompute source-level cell, nullary, and pair projection actions."""
+
+    source_key_set = frozenset(source_keys)
+    cell_actions = []
+    for cell in trace.component.cells:
+        actions = []
+        for predicate in cell.preds:
+            key = PredicateKey(predicate.name, predicate.arity)
+            if key in source_key_set and cell.is_positive(predicate):
+                actions.append((key, predicate.arity))
+        cell_actions.append(tuple(actions))
+    nullary_keys = []
+    for predicate, positive in trace.component.nullary_assignments:
+        key = PredicateKey(predicate.name, predicate.arity)
+        if positive and key in source_key_set:
+            nullary_keys.append(key)
+    actions: list[tuple[PredicateKey, bool] | None] = [None] * (
+        2 * len(trace.counting_state.projected_predicates)
+    )
+    for index, predicate in enumerate(trace.counting_state.projected_predicates):
+        key = PredicateKey(predicate.name, predicate.arity)
+        if predicate.arity != 2 or key not in source_key_set:
+            continue
+        actions[2 * index] = (key, True)
+        actions[2 * index + 1] = (key, False)
+    return tuple(cell_actions), tuple(nullary_keys), tuple(actions)
+
+
 def source_predicate_keys(problem) -> tuple[PredicateKey, ...]:
     keys = {
         PredicateKey(predicate.name, predicate.arity) for predicate in predicates(problem.sentence)
@@ -41,38 +77,53 @@ def project_structure(
     problem,
     anonymous,
     labels,
-    sampled_pairs,
+    pair_sampler,
+    metadata,
     *,
     source_keys: tuple[PredicateKey, ...] | None = None,
 ) -> SampledStructure:
     keys = source_predicate_keys(problem) if source_keys is None else source_keys
     relations: dict[PredicateKey, set[tuple[object, ...]]] = {key: set() for key in keys}
-    key_set = frozenset(keys)
+    cell_actions, nullary_keys, direct_bits = metadata
     for label, cell_index in zip(labels, anonymous.cell_indices, strict=True):
-        cell = anonymous.trace.component.cells[cell_index]
-        for predicate in cell.preds:
-            key = PredicateKey(predicate.name, predicate.arity)
-            if key in key_set and cell.is_positive(predicate):
-                relations[key].add((label,) * predicate.arity)
+        for key, arity in cell_actions[cell_index]:
+            relations[key].add((label,) * arity)
 
-    for predicate, positive in anonymous.trace.component.nullary_assignments:
-        key = PredicateKey(predicate.name, predicate.arity)
-        if positive and key in key_set:
-            relations[key].add(())
+    for key in nullary_keys:
+        relations[key].add(())
 
-    for request, atoms in sampled_pairs:
-        for atom in atoms:
-            key = PredicateKey(atom.predicate.name, atom.predicate.arity)
-            if key not in key_set:
-                continue
-            if atom.terms == (a, b):
-                terms = (labels[request.left], labels[request.right])
-            elif atom.terms == (b, a):
-                terms = (labels[request.right], labels[request.left])
-            else:
-                raise SamplingError(f"unexpected pair atom orientation: {atom}")
-            relations[key].add(terms)
-    return SampledStructure.from_mapping(labels, relations)
+    if pair_sampler.is_direct:
+        for request in anonymous.pair_requests:
+            mask = request.projection_mask
+            while mask:
+                bit = mask & -mask
+                action = direct_bits[bit.bit_length() - 1]
+                if action is not None:
+                    key, reverse = action
+                    left, right = request.left, request.right
+                    terms = (
+                        (labels[right], labels[left]) if reverse else (labels[left], labels[right])
+                    )
+                    relations[key].add(terms)
+                mask ^= bit
+    else:
+        key_set = frozenset(keys)
+        for request in anonymous.pair_requests:
+            for atom in pair_sampler.sample(request):
+                key = PredicateKey(atom.predicate.name, atom.predicate.arity)
+                if key not in key_set:
+                    continue
+                if atom.terms == (a, b):
+                    terms = (labels[request.left], labels[request.right])
+                elif atom.terms == (b, a):
+                    terms = (labels[request.right], labels[request.left])
+                else:
+                    raise SamplingError(f"unexpected pair atom orientation: {atom}")
+                relations[key].add(terms)
+    return SampledStructure(
+        tuple(labels),
+        tuple((key, frozenset(relations[key])) for key in keys),
+    )
 
 
-__all__ = ["project_structure", "source_predicate_keys"]
+__all__ = ["project_structure", "projection_metadata", "source_predicate_keys"]

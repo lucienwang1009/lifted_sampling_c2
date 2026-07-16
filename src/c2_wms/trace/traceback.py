@@ -148,32 +148,48 @@ class TracebackSampler:
             return []
 
         node = self.trace.domain_nodes[config]
-        domain_choices = []
-        for target_index, target_trace in enumerate(node.targets):
-            for next_config, terminal_weight in target_trace.terminal_weights.items():
-                domain_choices.append(
-                    (
-                        (target_index, next_config),
-                        terminal_weight,
-                        self.trace.domain_values[next_config],
+        domain_key = ("domain", config)
+        domain_alias = self._aliases.get(("product", domain_key, degree))
+        if domain_alias is None:
+            domain_choices = []
+            for target_index, target_trace in enumerate(node.targets):
+                for next_config, terminal_weight in target_trace.terminal_weights.items():
+                    domain_choices.append(
+                        (
+                            (target_index, next_config),
+                            terminal_weight,
+                            self.trace.domain_values[next_config],
+                        )
                     )
-                )
-        (target_index, next_config), terminal_degree, next_degree = self._product_choice(
-            ("domain", config), domain_choices, degree
-        )
+            domain_choice = self._product_choice(domain_key, domain_choices, degree)
+        else:
+            domain_choice = domain_alias.sample(self.rng)
+        (target_index, next_config), terminal_degree, next_degree = domain_choice
         target_trace = node.targets[target_index]
         remaining = self._sample_domain(next_config, next_degree)
-
-        final_pairs = [
-            ((target_state, g_config), weight)
-            for (target_state, g_config), weight in target_trace.g_layers[-1].items()
-            if g_config == next_config and self._accepts(target_state)
-        ]
-        current_target, current_g = self._value_choice(
-            ("terminal", config, target_index, next_config),
-            final_pairs,
-            terminal_degree,
+        target = _Element(
+            self._next_identifier,
+            target_trace.target[0],
+            target_trace.target,
         )
+        self._next_identifier += 1
+
+        terminal_key = ("terminal", config, target_index, next_config)
+        terminal_alias = self._aliases.get(("value", terminal_key, terminal_degree))
+        if terminal_alias is None:
+            final_pairs = [
+                ((target_state, g_config), weight)
+                for (target_state, g_config), weight in target_trace.g_layers[-1].items()
+                if g_config == next_config and self._accepts(target_state)
+            ]
+            terminal_choice = self._value_choice(
+                terminal_key,
+                final_pairs,
+                terminal_degree,
+            )
+        else:
+            terminal_choice = terminal_alias.sample(self.rng)
+        current_target, current_g = terminal_choice
 
         remaining_by_state = defaultdict(list)
         for element in remaining:
@@ -183,36 +199,46 @@ class TracebackSampler:
         for layer_index in range(len(target_trace.other_states), 0, -1):
             other = target_trace.other_states[layer_index - 1]
             count = self.trace.space.count(self.trace.space.dec(config, target_trace.target), other)
-            previous_layer = target_trace.g_layers[layer_index - 1]
-            triples = []
-            for (old_target, old_g), prefix_weight in previous_layer.items():
-                h_trace = self.trace.h_traces.get((old_target, other))
-                if h_trace is None or count >= len(h_trace.layers):
-                    continue
-                for (new_target, h_config), h_weight in h_trace.layers[count].items():
-                    if new_target != current_target:
+            g_key = ("g", config, target_index, layer_index, current_target, current_g)
+            g_alias = self._aliases.get(("product", g_key, current_degree))
+            if g_alias is None:
+                previous_layer = target_trace.g_layers[layer_index - 1]
+                triples = []
+                for (old_target, old_g), prefix_weight in previous_layer.items():
+                    h_trace = self.trace.h_traces.get((old_target, other))
+                    if h_trace is None or count >= len(h_trace.layers):
                         continue
-                    if tuple(a + b for a, b in zip(old_g, h_config, strict=True)) != current_g:
-                        continue
-                    adjusted = h_weight
-                    if self.trace.has_linear_order:
-                        denominator = 1
-                        for value in h_config:
-                            if value > 1:
-                                denominator *= math.factorial(value)
-                        adjusted = self.trace.arithmetic.multiply(
-                            adjusted,
-                            self.trace.arithmetic.from_fraction(
-                                1, math.factorial(count) // denominator
-                            ),
+                    for (new_target, h_config), h_weight in h_trace.layers[count].items():
+                        if new_target != current_target:
+                            continue
+                        if tuple(a + b for a, b in zip(old_g, h_config, strict=True)) != current_g:
+                            continue
+                        adjusted = h_weight
+                        if self.trace.has_linear_order:
+                            denominator = 1
+                            for value in h_config:
+                                if value > 1:
+                                    denominator *= math.factorial(value)
+                            adjusted = self.trace.arithmetic.multiply(
+                                adjusted,
+                                self.trace.arithmetic.from_fraction(
+                                    1, math.factorial(count) // denominator
+                                ),
+                            )
+                        triples.append(
+                            (
+                                (old_target, old_g, h_config),
+                                prefix_weight,
+                                adjusted,
+                            )
                         )
-                    triples.append(
-                        (
-                            (old_target, old_g, h_config),
-                            prefix_weight,
-                            adjusted,
-                        )
-                    )
+                g_choice = self._product_choice(
+                    g_key,
+                    triples,
+                    current_degree,
+                )
+            else:
+                g_choice = g_alias.sample(self.rng)
             (
                 (
                     old_target,
@@ -221,11 +247,7 @@ class TracebackSampler:
                 ),
                 prefix_degree,
                 h_degree,
-            ) = self._product_choice(
-                ("g", config, target_index, layer_index, current_target, current_g),
-                triples,
-                current_degree,
-            )
+            ) = g_choice
             self._reverse_h(
                 old_target,
                 other,
@@ -237,6 +259,7 @@ class TracebackSampler:
                 config,
                 target_index,
                 layer_index,
+                target.identifier,
             )
             current_target = old_target
             current_g = old_g
@@ -247,23 +270,6 @@ class TracebackSampler:
         if any(remaining_by_state.values()):
             raise SamplingError("traceback left unassigned remaining elements")
 
-        target = _Element(
-            self._next_identifier,
-            target_trace.target[0],
-            target_trace.target,
-        )
-        self._next_identifier += 1
-        # Pair requests were temporarily recorded with a sentinel target id.
-        for index, request in enumerate(self._pairs):
-            if request.left == -1:
-                self._pairs[index] = PairRequest(
-                    target.identifier,
-                    request.right,
-                    request.left_cell,
-                    request.right_cell,
-                    request.projection_mask,
-                    request.degree,
-                )
         return [*remaining, target]
 
     def _reverse_h(
@@ -278,29 +284,46 @@ class TracebackSampler:
         domain_config,
         target_index,
         layer_index,
+        target_identifier,
     ):
         trace = self.trace.h_traces[(initial_target, other)]
         current_target = final_target
         current_config = final_config
         current_degree = degree
         for step in range(count, 0, -1):
-            triples = []
-            for (old_target, old_config), prefix_weight in trace.layers[step - 1].items():
-                for (new_target, new_other), transition_weight in self.trace.t_update_dict[
-                    (old_target, other)
-                ].items():
-                    if new_target != current_target:
-                        continue
-                    expected = self.trace.space.inc(old_config, new_other)
-                    if expected != current_config:
-                        continue
-                    triples.append(
-                        (
-                            (old_target, old_config, new_other),
-                            prefix_weight,
-                            transition_weight,
+            h_key = (
+                "h",
+                domain_config,
+                target_index,
+                layer_index,
+                initial_target,
+                other,
+                step,
+                current_target,
+                current_config,
+            )
+            h_alias = self._aliases.get(("product", h_key, current_degree))
+            if h_alias is None:
+                triples = []
+                for (old_target, old_config), prefix_weight in trace.layers[step - 1].items():
+                    for (new_target, new_other), transition_weight in self.trace.t_update_dict[
+                        (old_target, other)
+                    ].items():
+                        if new_target != current_target:
+                            continue
+                        expected = self.trace.space.inc(old_config, new_other)
+                        if expected != current_config:
+                            continue
+                        triples.append(
+                            (
+                                (old_target, old_config, new_other),
+                                prefix_weight,
+                                transition_weight,
+                            )
                         )
-                    )
+                h_choice = self._product_choice(h_key, triples, current_degree)
+            else:
+                h_choice = h_alias.sample(self.rng)
             (
                 (
                     old_target,
@@ -309,35 +332,26 @@ class TracebackSampler:
                 ),
                 prefix_degree,
                 relation_degree,
-            ) = self._product_choice(
-                (
-                    "h",
-                    domain_config,
-                    target_index,
-                    layer_index,
-                    initial_target,
-                    other,
-                    step,
-                    current_target,
-                    current_config,
-                ),
-                triples,
-                current_degree,
+            ) = h_choice
+            relation_key = (
+                "relation",
+                old_target,
+                other,
+                current_target,
+                new_other,
             )
-            relation_choices: list[RelationChoice] = self.trace.transition_choices[
-                (old_target, other)
-            ][(current_target, new_other)]
-            relation = self._value_choice(
-                (
-                    "relation",
-                    old_target,
-                    other,
-                    current_target,
-                    new_other,
-                ),
-                [(choice, choice.weight) for choice in relation_choices],
-                relation_degree,
-            )
+            relation_alias = self._aliases.get(("value", relation_key, relation_degree))
+            if relation_alias is None:
+                relation_choices: list[RelationChoice] = self.trace.transition_choices[
+                    (old_target, other)
+                ][(current_target, new_other)]
+                relation = self._value_choice(
+                    relation_key,
+                    [(choice, choice.weight) for choice in relation_choices],
+                    relation_degree,
+                )
+            else:
+                relation = relation_alias.sample(self.rng)
             bucket = remaining_by_state[new_other]
             if not bucket:
                 raise SamplingError(f"no remaining element in state {new_other!r}")
@@ -345,7 +359,7 @@ class TracebackSampler:
             element.entry_state = other
             self._pairs.append(
                 PairRequest(
-                    -1,
+                    target_identifier,
                     element.identifier,
                     old_target[0],
                     other[0],

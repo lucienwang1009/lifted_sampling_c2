@@ -2,6 +2,7 @@ from wfomc import AlgoName, compile_problem, parse_problem
 from wfomc.algo import AlgoOptions, EvidenceStrategy, ExistentialStrategy
 from wfomc.algo.incremental3.solve import _solve_component
 
+import c2_wms.trace.traceback as traceback_module
 from c2_wms.discrete_sampling import RandomSource
 from c2_wms.trace import TracebackSampler, compile_component_trace
 
@@ -65,3 +66,51 @@ domain = 3
 
         assert outdegrees == [1, 1, 1]
         assert len(sampled.pair_requests) == 3
+
+
+def test_warm_traceback_reuses_candidates_without_traversing_trace_layers():
+    algo_input = _compile(r"""
+\forall X: (\exists_=1 Y: R(X,Y))
+domain = 3
+""")
+    component = algo_input.components[0]
+    trace = compile_component_trace(algo_input, component)
+    root = trace.root_terms[0]
+    sampler = TracebackSampler(trace, RandomSource(5))
+
+    expected = sampler.sample(root, ())
+
+    class NoItems(dict):
+        def items(self):
+            raise AssertionError("warm traceback traversed a cached trace layer")
+
+    for node in trace.domain_nodes.values():
+        for target in node.targets:
+            target.terminal_weights = NoItems(target.terminal_weights)
+            target.g_layers = tuple(NoItems(layer) for layer in target.g_layers)
+    for h_trace in trace.h_traces.values():
+        h_trace.layers = [NoItems(layer) for layer in h_trace.layers]
+    trace.t_update_dict = {
+        key: NoItems(transitions) for key, transitions in trace.t_update_dict.items()
+    }
+
+    sampler.rng = RandomSource(5)
+    assert sampler.sample(root, ()) == expected
+
+
+def test_traceback_assigns_pair_identifiers_without_sentinels(monkeypatch):
+    algo_input = _compile(r"""
+\forall X: (\exists_=1 Y: R(X,Y))
+domain = 3
+""")
+    trace = compile_component_trace(algo_input, algo_input.components[0])
+    original = traceback_module.PairRequest
+
+    def checked_pair_request(left, right, left_cell, right_cell, projection_mask, degree):
+        assert left >= 0
+        return original(left, right, left_cell, right_cell, projection_mask, degree)
+
+    monkeypatch.setattr(traceback_module, "PairRequest", checked_pair_request)
+    sampled = TracebackSampler(trace, RandomSource(5)).sample(trace.root_terms[0], ())
+
+    assert len(sampled.pair_requests) == 3

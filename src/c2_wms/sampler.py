@@ -22,7 +22,7 @@ from .errors import (
 from .label_sampling import LabelSampler
 from .options import SamplerOptions
 from .pair_sampling import PairSampler
-from .projection import project_structure, source_predicate_keys
+from .projection import project_structure, projection_metadata, source_predicate_keys
 from .trace import (
     AnonymousSample,
     ComponentTrace,
@@ -137,6 +137,9 @@ class CompiledSampler:
         self._split_aliases: dict[object, ExactAliasTable] = {}
         self._label_sampler = LabelSampler(problem, rng)
         self._source_predicates = source_predicate_keys(problem)
+        self._projection_metadata = {
+            id(trace): projection_metadata(trace, self._source_predicates) for trace in traces
+        }
         self._closed = False
         self._sample_count = 0
         self._pair_samplers = {
@@ -234,14 +237,12 @@ class CompiledSampler:
     ) -> SampledStructure:
         labels = self._label_sampler.sample(anonymous)
         pair_sampler = self._pair_samplers[id(anonymous.trace)]
-        sampled_pairs = (
-            (request, pair_sampler.sample(request)) for request in anonymous.pair_requests
-        )
         return project_structure(
             self.problem,
             anonymous,
             labels,
-            sampled_pairs,
+            pair_sampler,
+            self._projection_metadata[id(anonymous.trace)],
             source_keys=self._source_predicates,
         )
 

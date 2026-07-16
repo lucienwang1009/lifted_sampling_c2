@@ -380,6 +380,9 @@ class PairSampler:
         self._direct_cache: dict[tuple[int, int, int], tuple[tuple[Atom, ...], object]] = {}
         self._coefficients = CoefficientCache(len(trace.arithmetic.symbolic_variables))
         self._expected = self._expected_masses()
+        if self._is_direct and self.validate_masses:
+            for left, right, mask in self._expected:
+                self._direct_pair(left, right, mask)
         self._closed = False
         logger.debug(
             "Initialized pair sampler cells=%d binary_predicates=%d projected_predicates=%d "
@@ -391,6 +394,10 @@ class PairSampler:
             len(self._expected),
             validate_masses,
         )
+
+    @property
+    def is_direct(self) -> bool:
+        return self._is_direct
 
     def close(self) -> None:
         if self._closed:

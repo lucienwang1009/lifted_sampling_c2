@@ -37,6 +37,26 @@ domain = 3
     sampler.close()
 
 
+def test_direct_structure_projection_does_not_materialize_pair_atoms(monkeypatch):
+    sampler = compile_sampler(
+        parse_problem(r"""
+\forall X: (\exists_=1 Y: R(X,Y))
+domain = 3
+"""),
+        seed=17,
+    )
+    pair_sampler = next(iter(sampler._pair_samplers.values()))
+
+    def fail_on_atom_materialization(_request):
+        raise AssertionError("direct projection should consume the projection mask")
+
+    monkeypatch.setattr(pair_sampler, "sample", fail_on_atom_materialization)
+    structure = sampler.sample()
+
+    assert len(structure.relation("R", 2)) == 3
+    sampler.close()
+
+
 def test_pair_sampler_handles_general_counting_body_and_free_atoms():
     sampler, anonymous, pair_sampler = _anonymous_sample(r"""
 \forall X: (\exists_=1 Y: (R(X,Y) & S(Y,X)))
