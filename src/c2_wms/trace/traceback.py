@@ -256,9 +256,6 @@ class TracebackSampler:
                 h_config,
                 h_degree,
                 remaining_by_state,
-                config,
-                target_index,
-                layer_index,
                 target.identifier,
             )
             current_target = old_target
@@ -281,9 +278,6 @@ class TracebackSampler:
         final_config,
         degree,
         remaining_by_state,
-        domain_config,
-        target_index,
-        layer_index,
         target_identifier,
     ):
         trace = self.trace.h_traces[(initial_target, other)]
@@ -293,9 +287,6 @@ class TracebackSampler:
         for step in range(count, 0, -1):
             h_key = (
                 "h",
-                domain_config,
-                target_index,
-                layer_index,
                 initial_target,
                 other,
                 step,

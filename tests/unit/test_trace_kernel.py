@@ -98,6 +98,24 @@ domain = 3
     assert sampler.sample(root, ()) == expected
 
 
+def test_h_traceback_aliases_are_shared_across_outer_domain_contexts():
+    algo_input = _compile(r"""
+\forall X: (~R(X,X)) &
+\forall X: (\exists_=1 Y: R(X,Y))
+domain = 8
+""")
+    trace = compile_component_trace(algo_input, algo_input.components[0])
+    sampler = TracebackSampler(trace, RandomSource(42))
+
+    for _ in range(50):
+        sampler.sample(trace.root_terms[0], ())
+
+    h_keys = [key for key in sampler._aliases if key[1][0] == "h"]
+    assert h_keys
+    assert all(len(key[1]) == 6 for key in h_keys)
+    assert len(h_keys) < 100
+
+
 def test_traceback_assigns_pair_identifiers_without_sentinels(monkeypatch):
     algo_input = _compile(r"""
 \forall X: (\exists_=1 Y: R(X,Y))
