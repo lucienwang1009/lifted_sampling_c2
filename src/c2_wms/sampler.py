@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Iterator
 from dataclasses import replace
+from time import perf_counter
 from typing import TYPE_CHECKING
 
 from flint import fmpq
@@ -32,6 +34,9 @@ if TYPE_CHECKING:
     from wfomc.problem import Problem
 
     from .structure import SampledStructure
+
+
+logger = logging.getLogger(__name__)
 
 
 def _cardinality_marker_map(problem) -> dict[object, str]:
@@ -77,19 +82,37 @@ def _compile_traces(
     if len(reduced) != len(artifacts.algo_inputs):
         raise WfomcCompatibilityError("WFOMC branch metadata is misaligned")
 
-    traces = tuple(
-        compile_component_trace(
-            algo_input,
-            component,
-            reduced_problem=reduced_problem,
-            max_trace_states=max_trace_states,
-        )
-        for reduced_problem, algo_input in zip(reduced, artifacts.algo_inputs, strict=True)
-        for component in algo_input.components
-    )
+    traces = []
+    for branch_index, (reduced_problem, algo_input) in enumerate(
+        zip(reduced, artifacts.algo_inputs, strict=True)
+    ):
+        for component_index, component in enumerate(algo_input.components):
+            started = perf_counter()
+            logger.info(
+                "Compiling sampling trace branch=%d component=%d domain=%d cells=%d",
+                branch_index,
+                component_index,
+                algo_input.domain_size,
+                len(component.cells),
+            )
+            trace = compile_component_trace(
+                algo_input,
+                component,
+                reduced_problem=reduced_problem,
+                max_trace_states=max_trace_states,
+            )
+            traces.append(trace)
+            logger.info(
+                "Compiled sampling trace branch=%d component=%d roots=%d states=%d elapsed_ms=%.3f",
+                branch_index,
+                component_index,
+                len(trace.root_terms),
+                len(trace.domain_values),
+                (perf_counter() - started) * 1000,
+            )
     if not traces:
         raise UnsatisfiableProblemError("WFOMC produced no satisfiable components")
-    return traces
+    return tuple(traces)
 
 
 class CompiledSampler:
@@ -115,6 +138,7 @@ class CompiledSampler:
         self._label_sampler = LabelSampler(problem, rng)
         self._source_predicates = source_predicate_keys(problem)
         self._closed = False
+        self._sample_count = 0
         self._pair_samplers = {
             id(trace): PairSampler(
                 trace,
@@ -123,6 +147,14 @@ class CompiledSampler:
             )
             for trace in traces
         }
+        logger.info(
+            "Initialized compiled sampler traces=%d root_choices=%d source_predicates=%d "
+            "linear_order=%s",
+            len(self.traces),
+            len(self._root_alias.choices),
+            len(self._source_predicates),
+            any(trace.has_linear_order for trace in traces),
+        )
 
     def _build_root_mixture(self):
         choices = []
@@ -141,6 +173,12 @@ class CompiledSampler:
                         weights.append(coefficient)
         if not choices:
             raise UnsatisfiableProblemError("the problem has zero total weight")
+        logger.debug(
+            "Built root mixture choices=%d traces=%d symbolic_dimensions=%s",
+            len(choices),
+            len(self.traces),
+            tuple(len(trace.arithmetic.symbolic_variables) for trace in self.traces),
+        )
         return ExactAliasTable(choices, weights), sum(weights, fmpq(0))
 
     def _split_root(
@@ -165,6 +203,14 @@ class CompiledSampler:
                 weights.append(weight)
             table = ExactAliasTable(choices, weights)
             self._split_aliases[key] = table
+            logger.debug(
+                "Built root split alias trace=%d root=%d degree=%s choices=%d cache_entries=%d",
+                trace_index,
+                root_index,
+                degree,
+                len(choices),
+                len(self._split_aliases),
+            )
         return table.sample(self.rng)
 
     def _sample_anonymous(self) -> AnonymousSample:
@@ -172,6 +218,14 @@ class CompiledSampler:
         _base_degree, domain_degree = self._split_root(trace_index, root_index, degree)
         trace = self.traces[trace_index]
         root = trace.root_terms[root_index]
+        logger.debug(
+            "Selected root trace=%d root=%d degree=%s domain_degree=%s cell_config=%s",
+            trace_index,
+            root_index,
+            degree,
+            domain_degree,
+            root.cell_config,
+        )
         return self._trace_samplers[trace_index].sample(root, domain_degree)
 
     def _materialize(
@@ -194,13 +248,49 @@ class CompiledSampler:
     def sample(self) -> SampledStructure:
         if self._closed:
             raise RuntimeError("sampler is closed")
-        return self._materialize(self._sample_anonymous())
+        self._sample_count += 1
+        if not logger.isEnabledFor(logging.DEBUG):
+            return self._materialize(self._sample_anonymous())
+
+        started = perf_counter()
+        anonymous_started = perf_counter()
+        anonymous = self._sample_anonymous()
+        anonymous_ms = (perf_counter() - anonymous_started) * 1000
+        materialize_started = perf_counter()
+        sample = self._materialize(anonymous)
+        materialize_ms = (perf_counter() - materialize_started) * 1000
+        logger.debug(
+            "Sampled structure index=%d elements=%d pair_requests=%d relations=%d "
+            "true_tuples=%d anonymous_ms=%.3f materialize_ms=%.3f elapsed_ms=%.3f",
+            self._sample_count,
+            len(sample.domain),
+            len(anonymous.pair_requests),
+            len(sample.relations),
+            sum(len(tuples) for _, tuples in sample.relations),
+            anonymous_ms,
+            materialize_ms,
+            (perf_counter() - started) * 1000,
+        )
+        return sample
 
     def sample_many(self, count: int) -> Iterator[SampledStructure]:
         if count < 0:
             raise ValueError("count must be non-negative")
-        for _ in range(count):
-            yield self.sample()
+        started = perf_counter()
+        produced = 0
+        logger.info("Sampling batch started requested=%d", count)
+        try:
+            for _ in range(count):
+                sample = self.sample()
+                produced += 1
+                yield sample
+        finally:
+            logger.info(
+                "Sampling batch completed requested=%d produced=%d elapsed_ms=%.3f",
+                count,
+                produced,
+                (perf_counter() - started) * 1000,
+            )
 
     @property
     def total_weight(self):
@@ -213,6 +303,11 @@ class CompiledSampler:
             for pair_sampler in self._pair_samplers.values():
                 pair_sampler.close()
             self._closed = True
+            logger.info(
+                "Closed compiled sampler samples=%d root_split_aliases=%d",
+                self._sample_count,
+                len(self._split_aliases),
+            )
 
     def __enter__(self):
         return self
@@ -236,10 +331,25 @@ def compile_sampler(
         if options.seed is not None and options.seed != seed:
             raise ValueError("seed and options.seed disagree")
         options = replace(options, seed=seed)
+    started = perf_counter()
+    logger.info(
+        "Compiling sampler domain=%d seed=%r validate_masses=%s max_trace_states=%r",
+        len(problem.domain),
+        options.seed,
+        options.validate_masses,
+        options.max_trace_states,
+    )
     rng = RandomSource(options.seed)
     artifacts = compile_incremental3(problem)
     traces = _compile_traces(
         artifacts,
         max_trace_states=options.max_trace_states,
     )
-    return CompiledSampler(problem, traces, rng, options)
+    sampler = CompiledSampler(problem, traces, rng, options)
+    logger.info(
+        "Compiled sampler domain=%d traces=%d elapsed_ms=%.3f",
+        len(problem.domain),
+        len(traces),
+        (perf_counter() - started) * 1000,
+    )
+    return sampler

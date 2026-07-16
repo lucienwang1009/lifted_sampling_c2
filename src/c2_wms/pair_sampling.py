@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Sequence
+from time import perf_counter
 
 from pysat.solvers import Solver
 from pysdd.sdd import SddManager, Vtree
@@ -19,6 +21,8 @@ from c2_wms.trace.traceback import PairRequest
 
 WeightPair = tuple[object, object]
 _SAT_MODEL_LIMIT = 128
+
+logger = logging.getLogger(__name__)
 
 
 def _predicate_weight(weights, predicate, one) -> WeightPair:
@@ -377,6 +381,16 @@ class PairSampler:
         self._coefficients = CoefficientCache(len(trace.arithmetic.symbolic_variables))
         self._expected = self._expected_masses()
         self._closed = False
+        logger.debug(
+            "Initialized pair sampler cells=%d binary_predicates=%d projected_predicates=%d "
+            "direct=%s expected_conditions=%d validate_masses=%s",
+            len(trace.component.cells),
+            len(self._binary_predicates),
+            len(self._projected_indices),
+            self._is_direct,
+            len(self._expected),
+            validate_masses,
+        )
 
     def close(self) -> None:
         if self._closed:
@@ -385,10 +399,22 @@ class PairSampler:
             if isinstance(distribution, _SddDistribution):
                 distribution.close()
         self._closed = True
+        logger.debug(
+            "Closed pair sampler direct_conditions=%d conditioned_distributions=%d",
+            len(self._direct_cache),
+            len(self._distributions),
+        )
 
     def _ensure_cnf(self) -> TseitinCNF:
         if self.cnf is None:
             self.cnf = _pair_cnf(self.trace)
+            logger.debug(
+                "Built pair CNF variables=%d atoms=%d clauses=%d auxiliary_variables=%d",
+                self.cnf.n_vars,
+                len(self.cnf.atoms),
+                len(self.cnf.clauses),
+                len(self.cnf.auxiliary_vars),
+            )
         return self.cnf
 
     def _expected_masses(self):
@@ -537,16 +563,34 @@ class PairSampler:
                 f"observed={total}, expected={expected}"
             )
         self._direct_cache[key] = result
+        logger.debug(
+            "Cached direct pair condition left_cell=%d right_cell=%d mask=%d atoms=%d "
+            "cache_entries=%d",
+            left,
+            right,
+            mask,
+            len(atoms),
+            len(self._direct_cache),
+        )
         return result
 
     def _distribution(self, left: int, right: int, mask: int):
         key = (left, right, mask)
         distribution = self._distributions.get(key)
         if distribution is None:
+            started = perf_counter()
             weights = self._weights(*key)
             assumptions = self._condition_literals(*key)
             distribution = self._enumerate_distribution(weights, assumptions)
             if distribution is None:
+                logger.debug(
+                    "Pair condition exceeded SAT enumeration limit; switching to SDD "
+                    "left_cell=%d right_cell=%d mask=%d limit=%d",
+                    left,
+                    right,
+                    mask,
+                    _SAT_MODEL_LIMIT,
+                )
                 distribution = _SddDistribution(self, weights, assumptions)
             expected = self._expected.get(key, self.trace.arithmetic.zero())
             if self.validate_masses and distribution.total != expected:
@@ -556,6 +600,23 @@ class PairSampler:
                     f"observed={distribution.total}, expected={expected}"
                 )
             self._distributions[key] = distribution
+            choices = (
+                len(distribution.choices)
+                if isinstance(distribution, _EnumeratedDistribution)
+                else None
+            )
+            logger.debug(
+                "Cached conditioned pair distribution left_cell=%d right_cell=%d mask=%d "
+                "assumptions=%d backend=%s choices=%s cache_entries=%d elapsed_ms=%.3f",
+                left,
+                right,
+                mask,
+                len(assumptions),
+                "sat" if isinstance(distribution, _EnumeratedDistribution) else "sdd",
+                choices,
+                len(self._distributions),
+                (perf_counter() - started) * 1000,
+            )
         return distribution
 
     def sample(self, request: PairRequest) -> tuple[Atom, ...]:

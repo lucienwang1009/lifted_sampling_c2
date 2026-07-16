@@ -59,6 +59,8 @@ measure. Unsatisfiable inputs raise `UnsatisfiableProblemError`.
 uv run wfoms --input model.wfomcs --samples 10 --seed 7
 uv run wfoms --input model.wfomcs --samples 10 --seed 7 --output samples.jsonl
 uv run wfoms --input model.wfomcs --samples 10 --validate --output samples.jsonl
+uv run wfoms --input model.wfomcs --samples 10 -v --output samples.jsonl
+uv run wfoms --input model.wfomcs --samples 1 -vv 2>debug.log
 ```
 
 Without `--output`, the CLI writes one JSON object per sampled structure to
@@ -75,6 +77,16 @@ such as `jq`, Python, Polars, or DuckDB without loading the full sample set.
 `--validate` checks every structure against the original formula and problem
 metadata before writing it. It is disabled by default because formula
 interpretation and the cubic `LEQ` transitivity check are diagnostic work.
+
+Diagnostic logs use `WARNING` by default. `-v` enables INFO messages for parse,
+WFOMC preparation, trace compilation, batch sampling, and validation timing.
+`-vv` enables DEBUG messages for root and degree choices, traceback/label alias
+creation, pair backend cache misses, relation sizes, and per-sample timing.
+Additional `v` flags remain at DEBUG. Logs always go to standard error, so
+standard output remains a valid JSON Lines stream. Redirect stderr to retain a
+debug log without changing `--output`. Python API users can enable the same
+library logs with `logging.basicConfig(level=logging.DEBUG)` before calling
+`compile_sampler()`.
 
 ## Architecture and performance
 

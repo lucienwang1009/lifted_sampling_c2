@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from itertools import product
+from time import perf_counter
 
 from wfomc.fol import (
     And,
@@ -24,6 +26,8 @@ from wfomc.fol import (
 from .errors import StructureValidationError
 from .projection import source_predicate_keys
 from .structure import PredicateKey, SampledStructure
+
+logger = logging.getLogger(__name__)
 
 
 def _assignment_text(assignment: dict[object, object]) -> str:
@@ -298,17 +302,44 @@ def validate_structure(problem, sample: SampledStructure) -> None:
     and the LEQ transitivity check is cubic.
     """
 
+    started = perf_counter()
     domain, source_keys, relations = _relation_map(problem, sample)
+    logger.debug(
+        "Structure validation started domain=%d predicates=%d true_tuples=%d",
+        len(domain),
+        len(source_keys),
+        sum(len(tuples) for tuples in relations.values()),
+    )
     free_variables = problem.sentence.free_vars()
     if free_variables:
         names = ", ".join(sorted(map(str, free_variables)))
         raise StructureValidationError(f"problem sentence has free variables: {names}")
+    formula_started = perf_counter()
     valid, message = _evaluate(problem.sentence, domain, relations, {})
     if not valid:
         raise StructureValidationError(f"formula is false: {message}")
+    formula_ms = (perf_counter() - formula_started) * 1000
+
+    evidence_started = perf_counter()
     _validate_evidence(problem, relations)
+    evidence_ms = (perf_counter() - evidence_started) * 1000
+
+    cardinality_started = perf_counter()
     _validate_cardinality(problem, source_keys, relations)
+    cardinality_ms = (perf_counter() - cardinality_started) * 1000
+
+    leq_started = perf_counter()
     _validate_leq(domain, source_keys, relations)
+    leq_ms = (perf_counter() - leq_started) * 1000
+    logger.debug(
+        "Structure validation completed formula_ms=%.3f evidence_ms=%.3f "
+        "cardinality_ms=%.3f leq_ms=%.3f elapsed_ms=%.3f",
+        formula_ms,
+        evidence_ms,
+        cardinality_ms,
+        leq_ms,
+        (perf_counter() - started) * 1000,
+    )
 
 
 __all__ = ["validate_structure"]

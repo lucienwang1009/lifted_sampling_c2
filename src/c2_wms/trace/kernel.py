@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from collections import defaultdict
 from itertools import product
+from time import perf_counter
 
 from wfomc.algo.incremental3.counting_kernel import (
     Config,
@@ -26,6 +28,8 @@ from .model import (
     RootTerm,
     TargetTrace,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _add_configs(left: Config, right: Config) -> Config:
@@ -150,6 +154,8 @@ class _TraceKernel:
         self.updater = _TracedUpdater(t_update_dict, space, arithmetic)
         self.values = {space.zero: arithmetic.one()}
         self.nodes = {}
+        self._progress_enabled = logger.isEnabledFor(logging.DEBUG)
+        self._next_progress = 50_000
         target_order, other_orders = _build_elimination_orders(t_update_dict, space.offset_to_state)
         self.target_rank = {state: rank for rank, state in enumerate(target_order)}
         self.other_ranks = {
@@ -232,6 +238,16 @@ class _TraceKernel:
 
         self.values[config] = total
         self.nodes[config] = DomainTraceNode(config, tuple(target_traces))
+        state_count = len(self.values)
+        if self._progress_enabled and state_count >= self._next_progress:
+            logger.debug(
+                "Trace DP progress states=%d nodes=%d h_traces=%d",
+                state_count,
+                len(self.nodes),
+                len(self.updater.traces),
+            )
+            while self._next_progress <= state_count:
+                self._next_progress += 50_000
         return total
 
 
@@ -244,6 +260,7 @@ def compile_component_trace(
 ) -> ComponentTrace:
     """Compile one materialized WFOMC component into a traceback plan."""
 
+    started = perf_counter()
     counting_state = algo_input.counting_state
     unary_masks = algo_input.unary_cardinality_masks
     if counting_state is None or unary_masks is None:
@@ -252,6 +269,16 @@ def compile_component_trace(
     MultinomialCoefficients.setup(algo_input.domain_size)
     t_update, transition_choices = _build_transition_tables(component, counting_state, arithmetic)
     space = ConfigSpace((len(component.cells),) + counting_state.c_type_shape)
+    logger.debug(
+        "Built trace transition tables domain=%d cells=%d counter_shape=%s state_types=%d "
+        "transition_pairs=%d transition_outcomes=%d",
+        algo_input.domain_size,
+        len(component.cells),
+        counting_state.c_type_shape,
+        len(space.offset_to_state),
+        len(t_update),
+        sum(len(outcomes) for outcomes in t_update.values()),
+    )
     kernel = _TraceKernel(
         t_update,
         space,
@@ -311,7 +338,7 @@ def compile_component_trace(
             )
         )
         total = arithmetic.add(total, mass)
-    return ComponentTrace(
+    trace = ComponentTrace(
         component=component,
         reduced_problem=reduced_problem,
         space=space,
@@ -326,3 +353,34 @@ def compile_component_trace(
         root_terms=tuple(roots),
         total_mass=total,
     )
+    if logger.isEnabledFor(logging.DEBUG):
+        target_traces = sum(len(node.targets) for node in kernel.nodes.values())
+        g_layers = sum(
+            len(target.g_layers) for node in kernel.nodes.values() for target in node.targets
+        )
+        g_entries = sum(
+            len(layer)
+            for node in kernel.nodes.values()
+            for target in node.targets
+            for layer in target.g_layers
+        )
+        h_layers = sum(len(h_trace.layers) for h_trace in kernel.updater.traces.values())
+        h_entries = sum(
+            len(layer) for h_trace in kernel.updater.traces.values() for layer in h_trace.layers
+        )
+        logger.debug(
+            "Compiled component trace roots=%d states=%d nodes=%d target_traces=%d "
+            "g_layers=%d g_entries=%d h_traces=%d h_layers=%d h_entries=%d "
+            "elapsed_ms=%.3f",
+            len(roots),
+            len(kernel.values),
+            len(kernel.nodes),
+            target_traces,
+            g_layers,
+            g_entries,
+            len(kernel.updater.traces),
+            h_layers,
+            h_entries,
+            (perf_counter() - started) * 1000,
+        )
+    return trace

@@ -1,3 +1,5 @@
+import logging
+
 import wfomc
 from wfomc import parse_problem
 
@@ -32,6 +34,25 @@ domain = 2
     monkeypatch.setattr(wfomc, "solve", fail_if_called)
 
     assert compile_sampler(problem, seed=4).total_weight == 4
+
+
+def test_compile_sampler_logs_phase_metrics(caplog):
+    problem = parse_problem(r"""
+\forall X: (P(X) | ~P(X))
+domain = 2
+""")
+
+    with (
+        caplog.at_level(logging.INFO, logger="c2_wms"),
+        compile_sampler(problem, seed=4) as sampler,
+    ):
+        tuple(sampler.sample_many(2))
+
+    messages = [record.message for record in caplog.records]
+    assert any("Prepared WFOMC incremental3 input" in message for message in messages)
+    assert any("Compiled sampling trace" in message for message in messages)
+    assert any("Sampling batch completed requested=2 produced=2" in message for message in messages)
+    assert any("Closed compiled sampler samples=2" in message for message in messages)
 
 
 def test_root_mixture_filters_cardinality_marker_degrees():

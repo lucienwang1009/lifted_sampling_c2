@@ -1,10 +1,11 @@
 import json
+import logging
 import sys
 
 import pytest
 
 import c2_wms.sampler as sampler_module
-from c2_wms.cli import _model_record, main
+from c2_wms.cli import _model_record, _parser, main
 from c2_wms.structure import PredicateKey, SampledStructure
 
 
@@ -16,6 +17,11 @@ domain = 2
 """,
         encoding="utf-8",
     )
+
+
+def test_cli_verbosity_flags_select_info_and_debug():
+    assert _parser().parse_args(["--input", "model.wfomcs", "-v"]).verbose == 1
+    assert _parser().parse_args(["--input", "model.wfomcs", "-vv"]).verbose == 2
 
 
 def test_cli_writes_complete_models_as_json_lines(tmp_path, monkeypatch, capsys):
@@ -65,6 +71,37 @@ def test_cli_keeps_json_lines_on_stdout_without_output(tmp_path, monkeypatch, ca
     record = json.loads(capsys.readouterr().out)
     assert len(record["domain"]) == 2
     assert record["relations"][0]["predicate"] == "P"
+
+
+def test_cli_debug_logging_preserves_json_stdout(tmp_path, monkeypatch, capsys, caplog):
+    problem = tmp_path / "model.wfomcs"
+    _write_problem(problem)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "wfoms",
+            "--input",
+            str(problem),
+            "--samples",
+            "1",
+            "--seed",
+            "7",
+            "-vv",
+        ],
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        main()
+
+    record = json.loads(capsys.readouterr().out)
+    messages = [record.message for record in caplog.records]
+    assert len(record["domain"]) == 2
+    assert any("wfoms started" in message for message in messages)
+    assert any("Compiled sampler" in message for message in messages)
+    assert any("Selected root" in message for message in messages)
+    assert any("Sampled structure" in message for message in messages)
+    assert any("wfoms completed" in message for message in messages)
 
 
 def test_cli_validation_stops_before_writing_invalid_sample(tmp_path, monkeypatch, capsys):

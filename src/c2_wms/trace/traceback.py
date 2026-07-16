@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from collections import defaultdict
 from dataclasses import dataclass
@@ -11,6 +12,14 @@ from c2_wms.discrete_sampling import ExactAliasTable, RandRange
 from c2_wms.errors import SamplingError
 
 from .model import ComponentTrace, RelationChoice, RootTerm
+
+logger = logging.getLogger(__name__)
+
+
+def _choice_kind(key) -> object:
+    if isinstance(key, tuple) and key:
+        return key[0]
+    return type(key).__name__
 
 
 def _subtract_configs(total, part):
@@ -68,6 +77,13 @@ class TracebackSampler:
                     raise SamplingError("trace contains a negative coefficient")
             table = ExactAliasTable(choices, weights)
             self._aliases[cache_key] = table
+            logger.debug(
+                "Built traceback value alias kind=%s degree=%s choices=%d cache_entries=%d",
+                _choice_kind(key),
+                degree,
+                len(choices),
+                len(self._aliases),
+            )
         return table.sample(self.rng)
 
     def _product_choice(self, key, triples, degree):
@@ -86,19 +102,39 @@ class TracebackSampler:
                     weights.append(weight)
             table = ExactAliasTable(choices, weights)
             self._aliases[cache_key] = table
+            logger.debug(
+                "Built traceback product alias kind=%s degree=%s choices=%d cache_entries=%d",
+                _choice_kind(key),
+                degree,
+                len(choices),
+                len(self._aliases),
+            )
         return table.sample(self.rng)
 
     def sample(self, root: RootTerm, degree: Degree) -> AnonymousSample:
+        logger.debug(
+            "Traceback started elements=%d cell_config=%s degree=%s",
+            sum(root.cell_config),
+            root.cell_config,
+            degree,
+        )
         self._next_identifier = 0
         self._pairs = []
         elements = self._sample_domain(root.init_config, degree)
         elements.sort(key=lambda element: element.identifier)
-        return AnonymousSample(
+        sample = AnonymousSample(
             self.trace,
             root.cell_config,
             tuple(element.cell_index for element in elements),
             tuple(self._pairs),
         )
+        logger.debug(
+            "Traceback completed elements=%d pair_requests=%d aliases=%d",
+            len(sample.cell_indices),
+            len(sample.pair_requests),
+            len(self._aliases),
+        )
+        return sample
 
     def _sample_domain(self, config, degree):
         if sum(config) == 0:

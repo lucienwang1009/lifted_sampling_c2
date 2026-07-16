@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 
 from wfomc.cell_graph import CellEvidenceAllocation
@@ -9,6 +10,8 @@ from wfomc.multinomial import multinomial
 
 from c2_wms.discrete_sampling import ExactAliasTable, RandRange
 from c2_wms.errors import SamplingError, WfomcCompatibilityError
+
+logger = logging.getLogger(__name__)
 
 
 def _predicate_key(predicate) -> tuple[str, int]:
@@ -56,6 +59,12 @@ class LabelSampler:
         self._aliases: dict[object, ExactAliasTable] = {}
         self._allocations: dict[int, CellEvidenceAllocation] = {}
         self._profile_constant_cache: dict[int, tuple[tuple[object, ...], ...]] = {}
+        logger.debug(
+            "Initialized label sampler domain=%d evidence_profiles=%d profile_sizes=%s",
+            len(self.domain),
+            len(self.constants_by_profile),
+            tuple(len(values) for values in self.constants_by_profile.values()),
+        )
 
     def _allocation(self, trace) -> CellEvidenceAllocation:
         allocation = trace.component.cell_evidence_allocation
@@ -67,6 +76,11 @@ class LabelSampler:
                     len(trace.component.cells), len(self.domain)
                 )
                 self._allocations[key] = allocation
+                logger.debug(
+                    "Created unconstrained label allocation cells=%d domain=%d",
+                    len(trace.component.cells),
+                    len(self.domain),
+                )
         return allocation
 
     def _profile_constants(self, allocation):
@@ -138,6 +152,13 @@ class LabelSampler:
                 [weight for _, _, weight in transitions],
             )
             self._aliases[key] = table
+            logger.debug(
+                "Built label allocation alias profile=%d remaining=%s choices=%d cache_entries=%d",
+                profile_index,
+                remaining,
+                len(transitions),
+                len(self._aliases),
+            )
         return table.sample(self.rng)
 
     def sample(self, anonymous) -> tuple[object, ...]:
@@ -154,6 +175,14 @@ class LabelSampler:
         buckets: list[list[object]] = [[] for _ in range(len(trace.component.cells))]
         for profile_index, constants in enumerate(profiles):
             distribution, remaining = self._choose(allocation, profile_index, remaining)
+            logger.debug(
+                "Selected label allocation profile=%d constants=%d compatible_cells=%s "
+                "distribution=%s",
+                profile_index,
+                len(constants),
+                allocation.compatible_cells_by_evidence_profile[profile_index],
+                distribution,
+            )
             shuffled = list(constants)
             self.rng.shuffle(shuffled)
             offset = 0
@@ -177,6 +206,11 @@ class LabelSampler:
                 labels[identifier] = value
         if any(value is None for value in labels):
             raise SamplingError("not every anonymous element received a label")
+        logger.debug(
+            "Assigned concrete labels elements=%d bucket_sizes=%s",
+            len(labels),
+            tuple(len(bucket) for bucket in buckets),
+        )
         return tuple(labels)
 
 
