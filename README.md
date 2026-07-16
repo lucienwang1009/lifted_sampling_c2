@@ -20,6 +20,30 @@ uv run ruff check src tests
 uv run ruff format --check src tests
 ```
 
+### Ganak performance dependency
+
+This repository relies on
+[`meelgroup/ganak@82a1d1fb6f0d6fb4a46b825f84b29567728ae483`](https://github.com/meelgroup/ganak/commit/82a1d1fb6f0d6fb4a46b825f84b29567728ae483),
+the exact revision pinned by the WFOMC dependency. Ganak is an optional native
+executable used by WFOMC while computing pair factors. WFOMC falls back to
+PySDD when it is absent, so Ganak is not a hard installation or correctness
+dependency for small models. It is, however, a practical performance
+dependency for stable-roommates and other complex pair theories: the PySDD
+fallback can be extremely slow and memory-intensive.
+
+Install and verify the WFOMC-pinned Ganak build with:
+
+```bash
+uv run wfomc-install-ganak
+uv run python -c "from wfomc.ganak import find_ganak; print(find_ganak())"
+```
+
+Alternatively, put a `ganak` executable on `PATH` or set `GANAK` to its path.
+When supplying a binary this way, it must be compatible with the pinned commit;
+`wfoms` does not introspect an arbitrary binary to verify its Git revision.
+`wfoms` checks once per process and emits a warning naming the required revision
+when Ganak is unavailable; sampling continues through WFOMC's fallback backend.
+
 ## Python API
 
 Compile once and reuse the sampler. `sample_many()` is an iterator, so it does

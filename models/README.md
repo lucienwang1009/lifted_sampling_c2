@@ -54,3 +54,8 @@ find models -name '*.wfomcs' -exec sh -c '
 
 Validation is diagnostic and makes this command slower than normal sampling,
 especially for the larger stable-roommates instances.
+
+The stable-roommates models require the repository's pinned Ganak revision
+`82a1d1fb6f0d6fb4a46b825f84b29567728ae483` for practical preprocessing
+performance. Without Ganak, WFOMC falls back to PySDD, which can be extremely
+slow and memory-intensive. See the root README's Ganak setup instructions.
