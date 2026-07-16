@@ -7,7 +7,7 @@ WFOMC row/global count comparators, modulo counts, exact non-negative weights,
 cardinality constraints, unary evidence, nullary predicates, and `LEQ`.
 
 WFOMC is pinned by Git commit in both `pyproject.toml` and `uv.lock`:
-`481230d668dd34051161f2ca41fa21f2f008af84` from the upstream `devel` branch.
+`4addfae10b9827f66649b0494a30b3cccc5f738e` from the upstream `devel` branch.
 
 ## Setup
 
@@ -30,6 +30,10 @@ PySDD when it is absent, so Ganak is not a hard installation or correctness
 dependency for small models. It is, however, a practical performance
 dependency for stable-roommates and other complex pair theories: the PySDD
 fallback can be extremely slow and memory-intensive.
+
+The source installer also pins Ganak's compatible Arjun dependency to
+`1553e6b3ebdd76ba3b66d3fece4cf8de4e2743ce`; it does not build against Arjun's
+moving `master` branch.
 
 Install and verify the WFOMC-pinned Ganak build with:
 

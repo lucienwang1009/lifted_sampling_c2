@@ -25,7 +25,7 @@ build-backend = "hatchling.build"
 packages = ["src/c2_wms"]
 
 [tool.uv.sources]
-wfomc = { git = "https://github.com/yuanhong-wang/WFOMC.git", rev = "481230d668dd34051161f2ca41fa21f2f008af84" }
+wfomc = { git = "https://github.com/yuanhong-wang/WFOMC.git", rev = "4addfae10b9827f66649b0494a30b3cccc5f738e" }
 
 [dependency-groups]
 dev = [

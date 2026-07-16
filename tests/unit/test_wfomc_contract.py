@@ -6,11 +6,12 @@ from pathlib import Path
 from wfomc import AlgoName, compile_problem, parse_problem, solve
 from wfomc.algo.incremental3.input import CountingDPInput
 from wfomc.errors import GanakError
-from wfomc.ganak import GANAK_COMMIT
+from wfomc.ganak import GANAK_ARJUN_COMMIT, GANAK_COMMIT
 
 import c2_wms._wfomc_adapter as adapter_module
 from c2_wms import compile_sampler
 from c2_wms._wfomc_adapter import (
+    PINNED_GANAK_ARJUN_REVISION,
     PINNED_GANAK_REVISION,
     PINNED_WFOMC_REVISION,
     compile_incremental3,
@@ -64,7 +65,9 @@ def test_uv_source_matches_the_runtime_contract_revision():
     assert project["project"]["scripts"] == {"wfoms": "c2_wms.cli:main"}
     assert PINNED_WFOMC_REVISION in (root / "uv.lock").read_text()
     assert GANAK_COMMIT == PINNED_GANAK_REVISION
+    assert GANAK_ARJUN_COMMIT == PINNED_GANAK_ARJUN_REVISION
     assert PINNED_GANAK_REVISION in (root / "README.md").read_text()
+    assert PINNED_GANAK_ARJUN_REVISION in (root / "README.md").read_text()
 
 
 def test_pinned_wfomc_exposes_incremental3_sampling_inputs():

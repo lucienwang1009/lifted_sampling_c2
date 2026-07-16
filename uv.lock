@@ -29,7 +29,7 @@ dev = [
 requires-dist = [
     { name = "pysdd", specifier = ">=1.0.0" },
     { name = "python-sat", specifier = ">=1.9.dev5" },
-    { name = "wfomc", git = "https://github.com/yuanhong-wang/WFOMC.git?rev=481230d668dd34051161f2ca41fa21f2f008af84" },
+    { name = "wfomc", git = "https://github.com/yuanhong-wang/WFOMC.git?rev=4addfae10b9827f66649b0494a30b3cccc5f738e" },
 ]
 
 [package.metadata.requires-dev]
@@ -604,7 +604,7 @@ wheels = [
 [[package]]
 name = "wfomc"
 version = "0.1.0"
-source = { git = "https://github.com/yuanhong-wang/WFOMC.git?rev=481230d668dd34051161f2ca41fa21f2f008af84#481230d668dd34051161f2ca41fa21f2f008af84" }
+source = { git = "https://github.com/yuanhong-wang/WFOMC.git?rev=4addfae10b9827f66649b0494a30b3cccc5f738e#4addfae10b9827f66649b0494a30b3cccc5f738e" }
 dependencies = [
     { name = "lark" },
     { name = "networkx" },

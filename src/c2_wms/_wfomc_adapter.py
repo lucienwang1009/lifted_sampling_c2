@@ -16,8 +16,9 @@ from wfomc.weights import WeightOptions
 
 from .errors import UnsupportedSamplingInput, WfomcCompatibilityError
 
-PINNED_WFOMC_REVISION = "481230d668dd34051161f2ca41fa21f2f008af84"
+PINNED_WFOMC_REVISION = "4addfae10b9827f66649b0494a30b3cccc5f738e"
 PINNED_GANAK_REVISION = "82a1d1fb6f0d6fb4a46b825f84b29567728ae483"
+PINNED_GANAK_ARJUN_REVISION = "1553e6b3ebdd76ba3b66d3fece4cf8de4e2743ce"
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,7 @@ def compile_incremental3(problem):
 
 
 __all__ = [
+    "PINNED_GANAK_ARJUN_REVISION",
     "PINNED_GANAK_REVISION",
     "PINNED_WFOMC_REVISION",
     "compile_incremental3",
