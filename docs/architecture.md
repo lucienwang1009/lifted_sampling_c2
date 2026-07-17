@@ -11,7 +11,8 @@ src/c2_wms/
 ├── trace/
 │   ├── kernel.py          trace-producing incremental3 recurrence
 │   └── traceback.py       lazy degree-conditioned DP traceback
-├── pair_sampling.py       direct/SAT/SDD local pair sampling
+├── pair_sampling.py       direct/SAT local pair sampling and backend dispatch
+├── _pair_sdd.py           conditioned SDD local pair sampling backend
 ├── label_sampling.py      unary-evidence-aware domain-label sampling
 ├── projection.py          removal of reduction-only predicates
 └── structure.py           immutable public sampled structure

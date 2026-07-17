@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -11,6 +10,7 @@ from c2_wms.arithmetic import CoefficientCache, Degree
 from c2_wms.discrete_sampling import ExactAliasTable, RandRange
 from c2_wms.errors import SamplingError
 
+from .kernel import _adjust_h_weight, _state_accepts
 from .model import ComponentTrace, RelationChoice, RootTerm
 
 logger = logging.getLogger(__name__)
@@ -178,7 +178,11 @@ class TracebackSampler:
             final_pairs = [
                 ((target_state, g_config), weight)
                 for (target_state, g_config), weight in target_trace.g_layers[-1].items()
-                if g_config == next_config and self._accepts(target_state)
+                if g_config == next_config
+                and _state_accepts(
+                    target_state,
+                    self.trace.component.counting_accepting_states,
+                )
             ]
             terminal_choice = self._value_choice(
                 terminal_key,
@@ -211,18 +215,13 @@ class TracebackSampler:
                             continue
                         if tuple(a + b for a, b in zip(old_g, h_config, strict=True)) != current_g:
                             continue
-                        adjusted = h_weight
-                        if self.trace.has_linear_order:
-                            denominator = 1
-                            for value in h_config:
-                                if value > 1:
-                                    denominator *= math.factorial(value)
-                            adjusted = self.trace.arithmetic.multiply(
-                                adjusted,
-                                self.trace.arithmetic.from_fraction(
-                                    1, math.factorial(count) // denominator
-                                ),
-                            )
+                        adjusted = _adjust_h_weight(
+                            h_weight,
+                            h_config,
+                            count,
+                            self.trace.has_linear_order,
+                            self.trace.arithmetic,
+                        )
                         triples.append(
                             (
                                 (old_target, old_g, h_config),
@@ -385,14 +384,3 @@ class TracebackSampler:
                 f"target={current_target!r}, expected={initial_target!r}, "
                 f"config={current_config!r}"
             )
-
-    def _accepts(self, state):
-        cell_index = state[0]
-        return all(
-            value in accepted
-            for value, accepted in zip(
-                state[1:],
-                self.trace.component.counting_accepting_states[cell_index],
-                strict=True,
-            )
-        )

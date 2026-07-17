@@ -36,6 +36,27 @@ def _add_configs(left: Config, right: Config) -> Config:
     return tuple(a + b for a, b in zip(left, right, strict=True))
 
 
+def _state_accepts(state: State, accepting_states) -> bool:
+    cell_index = state[0]
+    return all(
+        value in accepted
+        for value, accepted in zip(state[1:], accepting_states[cell_index], strict=True)
+    )
+
+
+def _adjust_h_weight(weight, h_config, count, has_linear_order, arithmetic):
+    if not has_linear_order:
+        return weight
+    denominator = 1
+    for value in h_config:
+        if value > 1:
+            denominator *= math.factorial(value)
+    return arithmetic.multiply(
+        weight,
+        arithmetic.from_fraction(1, math.factorial(count) // denominator),
+    )
+
+
 def _advance(counter_state, delta, counting_state):
     updated = []
     for value, observed, counter in zip(
@@ -162,13 +183,6 @@ class _TraceKernel:
             for target, order in other_orders.items()
         }
 
-    def _accepts(self, state: State) -> bool:
-        cell_index = state[0]
-        return all(
-            value in accepted
-            for value, accepted in zip(state[1:], self.accepting_states[cell_index], strict=True)
-        )
-
     def evaluate(self, config: Config):
         cached = self.values.get(config)
         if cached is not None:
@@ -198,18 +212,13 @@ class _TraceKernel:
                     for (new_target, h_config), h_weight in self.updater.get(
                         old_target, other, count
                     ).items():
-                        adjusted = h_weight
-                        if self.has_linear_order:
-                            denominator = 1
-                            for value in h_config:
-                                if value > 1:
-                                    denominator *= math.factorial(value)
-                            adjusted = self.arithmetic.multiply(
-                                adjusted,
-                                self.arithmetic.from_fraction(
-                                    1, math.factorial(count) // denominator
-                                ),
-                            )
+                        adjusted = _adjust_h_weight(
+                            h_weight,
+                            h_config,
+                            count,
+                            self.has_linear_order,
+                            self.arithmetic,
+                        )
                         outcome = (new_target, _add_configs(old_config, h_config))
                         current[outcome] = self.arithmetic.add_product(
                             current[outcome], prefix_weight, adjusted
@@ -220,7 +229,7 @@ class _TraceKernel:
 
             terminal = defaultdict(self.arithmetic.zero)
             for (final_target, next_config), weight in layers[-1].items():
-                if self._accepts(final_target):
+                if _state_accepts(final_target, self.accepting_states):
                     terminal[next_config] = self.arithmetic.add(terminal[next_config], weight)
             for next_config, prefix_weight in terminal.items():
                 total = self.arithmetic.add_product(
