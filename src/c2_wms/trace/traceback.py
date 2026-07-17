@@ -42,6 +42,7 @@ class PairRequest:
     right_cell: int
     projection_mask: int
     degree: Degree
+    source_mask: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +62,7 @@ class TracebackSampler:
         self._aliases: dict[object, ExactAliasTable] = {}
         self._next_identifier = 0
         self._pairs: list[PairRequest] = []
+        self._pair_source_mask = None
 
     def _value_choice(self, key, pairs, degree):
         cache_key = ("value", key, degree)
@@ -111,7 +113,7 @@ class TracebackSampler:
             )
         return table.sample(self.rng)
 
-    def sample(self, root: RootTerm, degree: Degree) -> AnonymousSample:
+    def sample(self, root: RootTerm, degree: Degree, pair_source_mask=None) -> AnonymousSample:
         logger.debug(
             "Traceback started elements=%d cell_config=%s degree=%s",
             sum(root.cell_config),
@@ -120,6 +122,7 @@ class TracebackSampler:
         )
         self._next_identifier = 0
         self._pairs = []
+        self._pair_source_mask = pair_source_mask
         elements = self._sample_domain(root.init_config, degree)
         elements.sort(key=lambda element: element.identifier)
         sample = AnonymousSample(
@@ -348,16 +351,36 @@ class TracebackSampler:
                 raise SamplingError(f"no remaining element in state {new_other!r}")
             element = bucket.pop()
             element.entry_state = other
-            self._pairs.append(
-                PairRequest(
-                    target_identifier,
-                    element.identifier,
+            if self._pair_source_mask is None:
+                self._pairs.append(
+                    PairRequest(
+                        target_identifier,
+                        element.identifier,
+                        old_target[0],
+                        other[0],
+                        relation.mask,
+                        relation_degree,
+                    )
+                )
+            else:
+                source_mask = self._pair_source_mask(
                     old_target[0],
                     other[0],
                     relation.mask,
                     relation_degree,
                 )
-            )
+                if source_mask:
+                    self._pairs.append(
+                        PairRequest(
+                            target_identifier,
+                            element.identifier,
+                            old_target[0],
+                            other[0],
+                            relation.mask,
+                            relation_degree,
+                            source_mask,
+                        )
+                    )
             current_target = old_target
             current_config = old_config
             current_degree = prefix_degree

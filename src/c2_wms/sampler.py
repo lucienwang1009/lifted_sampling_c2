@@ -146,6 +146,7 @@ class CompiledSampler:
             id(trace): PairSampler(
                 trace,
                 rng,
+                self._source_predicates,
                 validate_masses=options.validate_masses,
             )
             for trace in traces
@@ -229,7 +230,11 @@ class CompiledSampler:
             domain_degree,
             root.cell_config,
         )
-        return self._trace_samplers[trace_index].sample(root, domain_degree)
+        return self._trace_samplers[trace_index].sample(
+            root,
+            domain_degree,
+            self._pair_samplers[id(trace)].sample_condition,
+        )
 
     def _materialize(
         self,

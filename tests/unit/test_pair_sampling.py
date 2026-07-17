@@ -11,6 +11,12 @@ def _anonymous_sample(source: str):
     return sampler, anonymous, sampler._pair_samplers[id(anonymous.trace)]
 
 
+def _source_truth(pair_sampler, mask, predicate, terms):
+    index = pair_sampler._source_binary_indices[(predicate.name, predicate.arity)]
+    bit = 2 * index if terms == (pair_sampler.b, pair_sampler.a) else 2 * index + 1
+    return bool(mask & (1 << bit))
+
+
 def test_pair_sat_enumeration_limit_is_1024():
     assert pair_sampling._SAT_MODEL_LIMIT == 1024
 
@@ -23,13 +29,16 @@ domain = 3
 
     assert pair_sampler.cnf is None
     for request in anonymous.pair_requests:
-        atoms = pair_sampler.sample(request)
-        truth = {(atom.predicate.name, atom.terms) for atom in atoms}
+        source_mask = pair_sampler.sample_mask(request)
         predicate = anonymous.trace.counting_state.projected_predicates[0]
-        assert ((predicate.name, (pair_sampler.a, pair_sampler.b)) in truth) == bool(
+        assert _source_truth(
+            pair_sampler, source_mask, predicate, (pair_sampler.a, pair_sampler.b)
+        ) == bool(
             request.projection_mask & 0b10
         )
-        assert ((predicate.name, (pair_sampler.b, pair_sampler.a)) in truth) == bool(
+        assert _source_truth(
+            pair_sampler, source_mask, predicate, (pair_sampler.b, pair_sampler.a)
+        ) == bool(
             request.projection_mask & 0b01
         )
     assert pair_sampler.cnf is None
@@ -37,7 +46,7 @@ domain = 3
     sampler.close()
 
 
-def test_direct_structure_projection_does_not_materialize_pair_atoms(monkeypatch):
+def test_direct_structure_projection_does_not_build_conditioned_distribution(monkeypatch):
     sampler = compile_sampler(
         parse_problem(r"""
 \forall X: (\exists_=1 Y: R(X,Y))
@@ -47,13 +56,35 @@ domain = 3
     )
     pair_sampler = next(iter(sampler._pair_samplers.values()))
 
-    def fail_on_atom_materialization(_request):
+    def fail_on_conditioned_distribution(*_args):
         raise AssertionError("direct projection should consume the projection mask")
 
-    monkeypatch.setattr(pair_sampler, "sample", fail_on_atom_materialization)
+    monkeypatch.setattr(pair_sampler, "_distribution", fail_on_conditioned_distribution)
     structure = sampler.sample()
 
     assert len(structure.relation("R", 2)) == 3
+    sampler.close()
+
+
+def test_nondirect_pairs_are_presampled_as_sparse_source_masks(monkeypatch):
+    sampler, anonymous, pair_sampler = _anonymous_sample(r"""
+\forall X: (\forall Y: ((E(X,Y) -> E(Y,X)) &
+                         (R(X) | B(X)) &
+                         (~R(X) | ~B(X)) &
+                         (E(X,Y) -> ~(R(X) & R(Y)) & ~(B(X) & B(Y)))))
+domain = 4
+""")
+
+    assert not pair_sampler.is_direct
+    assert anonymous.pair_requests
+    assert all(request.source_mask for request in anonymous.pair_requests)
+
+    def fail_on_second_pair_sample(_request):
+        raise AssertionError("source masks should be sampled during anonymous traceback")
+
+    monkeypatch.setattr(pair_sampler, "sample_mask", fail_on_second_pair_sample)
+    structure = sampler._materialize(anonymous)
+    assert len(structure.relation("E", 2)) == 2 * len(anonymous.pair_requests)
     sampler.close()
 
 
@@ -64,10 +95,9 @@ domain = 2
 """)
 
     for request in anonymous.pair_requests:
-        atoms = set(pair_sampler.sample(request))
+        source_mask = pair_sampler.sample_mask(request)
         # The reduced projected predicate is definitionally equivalent to the
         # arbitrary body on both pair orientations.
-        projected = anonymous.trace.counting_state.projected_predicates[0]
         r_pred = next(
             predicate
             for predicate in anonymous.trace.component.cells[0].preds
@@ -82,8 +112,9 @@ domain = 2
             (pair_sampler.a, pair_sampler.b, 1),
             (pair_sampler.b, pair_sampler.a, 0),
         ):
-            marker = projected(left, right) in atoms
-            assert marker == (r_pred(left, right) in atoms and s_pred(right, left) in atoms)
+            marker = _source_truth(pair_sampler, source_mask, r_pred, (left, right)) and (
+                _source_truth(pair_sampler, source_mask, s_pred, (right, left))
+            )
             assert marker == bool(request.projection_mask & (1 << bit))
     assert pair_sampler.cnf is not None
     assert pair_sampler._distributions
@@ -102,13 +133,25 @@ domain = 2
 """)
 
     request = anonymous.pair_requests[0]
-    atoms = set(pair_sampler.sample(request))
-    projected = anonymous.trace.counting_state.projected_predicates[0]
+    source_mask = pair_sampler.sample_mask(request)
     for left, right, bit in (
         (pair_sampler.a, pair_sampler.b, 1),
         (pair_sampler.b, pair_sampler.a, 0),
     ):
-        assert (projected(left, right) in atoms) == bool(request.projection_mask & (1 << bit))
+        r_pred = next(
+            predicate
+            for predicate in anonymous.trace.component.cells[0].preds
+            if predicate.name == "R"
+        )
+        s_pred = next(
+            predicate
+            for predicate in anonymous.trace.component.cells[0].preds
+            if predicate.name == "S"
+        )
+        marker = _source_truth(pair_sampler, source_mask, r_pred, (left, right)) and (
+            _source_truth(pair_sampler, source_mask, s_pred, (right, left))
+        )
+        assert marker == bool(request.projection_mask & (1 << bit))
     assert isinstance(
         pair_sampler._distributions[
             (request.left_cell, request.right_cell, request.projection_mask)
@@ -132,7 +175,12 @@ domain = 2
     )
     draws = 4_000
     positives = sum(
-        s_predicate(pair_sampler.a, pair_sampler.b) in pair_sampler.sample(request)
+        _source_truth(
+            pair_sampler,
+            pair_sampler.sample_mask(request),
+            s_predicate,
+            (pair_sampler.a, pair_sampler.b),
+        )
         for _ in range(draws)
     )
 

@@ -8,7 +8,7 @@ from time import perf_counter
 
 from pysat.solvers import Solver
 from pysdd.sdd import SddManager, Vtree
-from wfomc.fol import Atom, a, b, context_for, simplify_boolean, substitute, true
+from wfomc.fol import a, b, context_for, simplify_boolean, substitute, true
 from wfomc.fol.cnf import TseitinCNF, encode_tseitin
 from wfomc.fol.grounding import ground_on_tuple
 from wfomc.weights import compile_weight_mapping
@@ -223,7 +223,7 @@ class _SddDistribution:
             self._aliases[cache_key] = table
         return table.sample(self.sampler.rng)
 
-    def sample(self, degree: Degree) -> tuple[Atom, ...]:
+    def sample(self, degree: Degree) -> int:
         if self.coefficients.coefficient(self.total, degree) <= 0:
             raise SamplingError("pair factor has no mass at the requested degree")
         assignment: dict[int, bool] = {}
@@ -233,11 +233,7 @@ class _SddDistribution:
             degree,
             assignment,
         )
-        return tuple(
-            atom
-            for atom in self.sampler.cnf.atoms
-            if assignment[self.sampler.cnf.atom_to_var[atom]] and atom.terms in ((a, b), (b, a))
-        )
+        return self.sampler._source_mask_from_assignment(assignment)
 
     def _sample_node(self, node, expected_vtree, degree, assignment) -> None:
         expected_scope = self.circuit._scope(expected_vtree)
@@ -327,7 +323,7 @@ class _EnumeratedDistribution:
             total = sampler.trace.arithmetic.add(total, weight)
         self.total = total
 
-    def sample(self, degree: Degree) -> tuple[Atom, ...]:
+    def table(self, degree: Degree) -> ExactAliasTable:
         table = self._aliases.get(degree)
         if table is None:
             choices = []
@@ -343,16 +339,20 @@ class _EnumeratedDistribution:
                 raise SamplingError("pair factor has no mass at the requested degree")
             table = ExactAliasTable(choices, weights)
             self._aliases[degree] = table
+        return table
+
+    def sample(self, degree: Degree) -> int:
+        table = self.table(degree)
         return table.sample(self.sampler.rng)
 
 
 class PairSampler:
-    """Sample pair atoms directly or from a lazily conditioned pair theory."""
+    """Sample source-level pair masks from exact conditioned pair factors."""
 
     a = a
     b = b
 
-    def __init__(self, trace, rng: RandRange, *, validate_masses: bool = True):
+    def __init__(self, trace, rng: RandRange, source_keys, *, validate_masses: bool = True):
         self.trace = trace
         self.rng = rng
         self.validate_masses = validate_masses
@@ -373,11 +373,22 @@ class PairSampler:
         self._is_direct = all(
             predicate in self._projected_indices for predicate in self._binary_predicates
         )
+        source_binary_keys = tuple(key for key in source_keys if key.arity == 2)
+        self._source_binary_indices = {
+            (key.name, key.arity): index for index, key in enumerate(source_binary_keys)
+        }
+        self.source_actions = tuple(
+            action
+            for key in source_binary_keys
+            for action in ((key, True), (key, False))
+        )
         self.cnf: TseitinCNF | None = None
+        self._source_variable_bits: tuple[tuple[int, int], ...] = ()
         self._distributions: dict[
             tuple[int, int, int], _EnumeratedDistribution | _SddDistribution
         ] = {}
-        self._direct_cache: dict[tuple[int, int, int], tuple[tuple[Atom, ...], object]] = {}
+        self._condition_kernels: dict[tuple[int, int, int, Degree], int | ExactAliasTable] = {}
+        self._direct_cache: dict[tuple[int, int, int], tuple[int, object]] = {}
         self._coefficients = CoefficientCache(len(trace.arithmetic.symbolic_variables))
         self._expected = self._expected_masses()
         if self._is_direct and self.validate_masses:
@@ -415,6 +426,12 @@ class PairSampler:
     def _ensure_cnf(self) -> TseitinCNF:
         if self.cnf is None:
             self.cnf = _pair_cnf(self.trace)
+            source_variable_bits = []
+            for atom, variable in self.cnf.atom_to_var.items():
+                bit = self._source_bit(atom)
+                if bit is not None:
+                    source_variable_bits.append((variable, bit))
+            self._source_variable_bits = tuple(source_variable_bits)
             logger.debug(
                 "Built pair CNF variables=%d atoms=%d clauses=%d auxiliary_variables=%d",
                 self.cnf.n_vars,
@@ -423,6 +440,44 @@ class PairSampler:
                 len(self.cnf.auxiliary_vars),
             )
         return self.cnf
+
+    def _source_bit(self, atom) -> int | None:
+        index = self._source_binary_indices.get((atom.predicate.name, atom.predicate.arity))
+        if index is None:
+            return None
+        if atom.terms == (b, a):
+            return 2 * index
+        if atom.terms == (a, b):
+            return 2 * index + 1
+        return None
+
+    def _source_mask_from_positive(self, positive: set[int]) -> int:
+        mask = 0
+        for variable, bit in self._source_variable_bits:
+            if variable in positive:
+                mask |= 1 << bit
+        return mask
+
+    def _source_mask_from_assignment(self, assignment: dict[int, bool]) -> int:
+        mask = 0
+        for variable, bit in self._source_variable_bits:
+            if assignment[variable]:
+                mask |= 1 << bit
+        return mask
+
+    def _direct_source_mask(self, projection: int) -> int:
+        source_mask = 0
+        while projection:
+            bit = projection & -projection
+            projected_bit = bit.bit_length() - 1
+            predicate = self.trace.counting_state.projected_predicates[projected_bit // 2]
+            source_index = self._source_binary_indices.get(
+                (predicate.name, predicate.arity)
+            )
+            if source_index is not None:
+                source_mask |= 1 << (2 * source_index + projected_bit % 2)
+            projection ^= bit
+        return source_mask
 
     def _expected_masses(self):
         rows = self.trace.component.counting_binary_relation_weights
@@ -509,8 +564,7 @@ class PairSampler:
             (variable, -variable) for variable in variables if variable not in used_variables
         )
 
-        choices = []
-        choice_weights = []
+        choice_weights = {}
         model_count = 0
         with Solver(name="cadical195", bootstrap_with=clauses) as solver:
             while solver.solve(assumptions=assumptions):
@@ -525,21 +579,22 @@ class PairSampler:
                     value = weights[variable][0 if variable in positive else 1]
                     weight = self.trace.arithmetic.multiply(weight, value)
                 if weight != self.trace.arithmetic.zero():
-                    choices.append(
-                        tuple(
-                            atom
-                            for atom in cnf.atoms
-                            if cnf.atom_to_var[atom] in positive and atom.terms in ((a, b), (b, a))
-                        )
+                    source_mask = self._source_mask_from_positive(positive)
+                    choice_weights[source_mask] = self.trace.arithmetic.add(
+                        choice_weights.get(source_mask, self.trace.arithmetic.zero()),
+                        weight,
                     )
-                    choice_weights.append(weight)
 
                 if not variables:
                     break
                 solver.add_clause(
                     [-variable if variable in positive else variable for variable in variables]
                 )
-        return _EnumeratedDistribution(self, choices, choice_weights)
+        return _EnumeratedDistribution(
+            self,
+            tuple(choice_weights),
+            tuple(choice_weights.values()),
+        )
 
     def _direct_pair(self, left: int, right: int, mask: int):
         key = (left, right, mask)
@@ -549,9 +604,10 @@ class PairSampler:
 
         one = self.trace.arithmetic.one()
         total = one
-        atoms = []
+        source_mask = 0
         for predicate in self._binary_predicates:
             index = self._projected_indices[predicate]
+            source_index = self._source_binary_indices.get((predicate.name, predicate.arity))
             positive, negative = _predicate_weight(self.predicate_weights, predicate, one)
             for left_term, right_term, bit in (
                 (b, a, 2 * index),
@@ -559,9 +615,10 @@ class PairSampler:
             ):
                 is_positive = bool(mask & (1 << bit))
                 total = self.trace.arithmetic.multiply(total, positive if is_positive else negative)
-                if is_positive:
-                    atoms.append(predicate(left_term, right_term))
-        result = (tuple(atoms), total)
+                if is_positive and source_index is not None:
+                    source_bit = 2 * source_index + int((left_term, right_term) == (a, b))
+                    source_mask |= 1 << source_bit
+        result = (source_mask, total)
         expected = self._expected.get(key, self.trace.arithmetic.zero())
         if self.validate_masses and total != expected:
             raise WfomcCompatibilityError(
@@ -571,12 +628,12 @@ class PairSampler:
             )
         self._direct_cache[key] = result
         logger.debug(
-            "Cached direct pair condition left_cell=%d right_cell=%d mask=%d atoms=%d "
+            "Cached direct pair condition left_cell=%d right_cell=%d mask=%d source_bits=%d "
             "cache_entries=%d",
             left,
             right,
             mask,
-            len(atoms),
+            source_mask.bit_count(),
             len(self._direct_cache),
         )
         return result
@@ -626,23 +683,46 @@ class PairSampler:
             )
         return distribution
 
-    def sample(self, request: PairRequest) -> tuple[Atom, ...]:
+    def sample_condition(
+        self,
+        left_cell: int,
+        right_cell: int,
+        projection_mask: int,
+        degree: Degree,
+    ) -> int:
         if self._closed:
             raise RuntimeError("pair sampler is closed")
+        key = (left_cell, right_cell, projection_mask, degree)
+        cached = self._condition_kernels.get(key)
+        if cached is not None:
+            if isinstance(cached, int):
+                return cached
+            return cached.sample(self.rng)
         if self._is_direct:
-            atoms, total = self._direct_pair(
-                request.left_cell,
-                request.right_cell,
-                request.projection_mask,
-            )
-            if self._coefficients.coefficient(total, request.degree) <= 0:
-                raise SamplingError("pair factor has no mass at the requested degree")
-            return atoms
-        return self._distribution(
+            source_mask = self._direct_source_mask(projection_mask)
+            self._condition_kernels[key] = source_mask
+            return source_mask
+        distribution = self._distribution(
+            left_cell,
+            right_cell,
+            projection_mask,
+        )
+        if isinstance(distribution, _EnumeratedDistribution):
+            table = distribution.table(degree)
+            kernel = table.choices[0] if len(table.choices) == 1 else table
+            self._condition_kernels[key] = kernel
+            if isinstance(kernel, int):
+                return kernel
+            return kernel.sample(self.rng)
+        return distribution.sample(degree)
+
+    def sample_mask(self, request: PairRequest) -> int:
+        return self.sample_condition(
             request.left_cell,
             request.right_cell,
             request.projection_mask,
-        ).sample(request.degree)
+            request.degree,
+        )
 
 
 __all__ = ["PairSampler"]

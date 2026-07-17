@@ -19,7 +19,7 @@ domain = 3
     assert sampler.total_weight == 27
     sampled = sampler._sample_anonymous()
     assert len(sampled.cell_indices) == 3
-    assert len(sampled.pair_requests) == 3
+    assert all(request.source_mask for request in sampled.pair_requests)
 
 
 def test_compile_sampler_does_not_run_a_second_wfomc_solve(monkeypatch):

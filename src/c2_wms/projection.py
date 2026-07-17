@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from wfomc.fol import Predicate, a, b, predicates
+from wfomc.fol import Predicate, predicates
 
-from c2_wms.errors import SamplingError, UnsupportedSamplingInput
+from c2_wms.errors import UnsupportedSamplingInput
 from c2_wms.structure import PredicateKey, SampledStructure
 
 
@@ -92,34 +92,28 @@ def project_structure(
     for key in nullary_keys:
         relations[key].add(())
 
-    if pair_sampler.is_direct:
-        for request in anonymous.pair_requests:
+    source_actions = pair_sampler.source_actions
+    for request in anonymous.pair_requests:
+        if request.source_mask is not None:
+            mask = request.source_mask
+            actions = source_actions
+        elif pair_sampler.is_direct:
             mask = request.projection_mask
-            while mask:
-                bit = mask & -mask
-                action = direct_bits[bit.bit_length() - 1]
-                if action is not None:
-                    key, reverse = action
-                    left, right = request.left, request.right
-                    terms = (
-                        (labels[right], labels[left]) if reverse else (labels[left], labels[right])
-                    )
-                    relations[key].add(terms)
-                mask ^= bit
-    else:
-        key_set = frozenset(keys)
-        for request in anonymous.pair_requests:
-            for atom in pair_sampler.sample(request):
-                key = PredicateKey(atom.predicate.name, atom.predicate.arity)
-                if key not in key_set:
-                    continue
-                if atom.terms == (a, b):
-                    terms = (labels[request.left], labels[request.right])
-                elif atom.terms == (b, a):
-                    terms = (labels[request.right], labels[request.left])
-                else:
-                    raise SamplingError(f"unexpected pair atom orientation: {atom}")
+            actions = direct_bits
+        else:
+            mask = pair_sampler.sample_mask(request)
+            actions = source_actions
+        while mask:
+            bit = mask & -mask
+            action = actions[bit.bit_length() - 1]
+            if action is not None:
+                key, reverse = action
+                left, right = request.left, request.right
+                terms = (
+                    (labels[right], labels[left]) if reverse else (labels[left], labels[right])
+                )
                 relations[key].add(terms)
+            mask ^= bit
     return SampledStructure(
         tuple(labels),
         tuple((key, frozenset(relations[key])) for key in keys),
