@@ -12,6 +12,55 @@ Two runs are retained locally: the large-domain run at
 baseline at `benchmarks/results/comparison.{json,csv}`. The results directory is
 ignored because timings are machine-specific.
 
+## Comparison with lifted_sampling_fo2
+
+The same model text was also run through
+`/Users/lucien/Sync/repos/lifted_sampling_fo2` at commit `b49ef85` on branch
+`modk`. Model files were always read from this repository, so uncommitted model
+changes in the FO2 checkout did not affect the comparison. The FO2 environment
+uses Python 3.14.3, while C2 WMS uses Python 3.11.7.
+
+Preprocessing means parse plus context/DP construction on FO2 and parse plus
+`compile_sampler` on C2 WMS. FO2's public sampling function owns aliases and
+caches for one batch only, so sampling compares an amortized 20-sample batch:
+C2 WMS's first sample plus 19 warm samples versus one FO2 20-sample call.
+
+| Model | Largest common n | C2 compile | FO2 compile | FO2/C2 | C2 RSS | FO2 RSS |
+|---|---:|---:|---:|---:|---:|---:|
+| 2-colored-graph | 100 | 34.4 ms | 65.0 ms | 1.89x | 57.8 MiB | 210.4 MiB |
+| friends-smokes | 20 | 922.2 ms | 1279.8 ms | 1.39x | 160.1 MiB | 407.3 MiB |
+| nonisolated_graph | 80 | 4.15 s | 7.93 s | 1.91x | 840.1 MiB | 2968.8 MiB |
+| permutation-no-fix-sc2 | 100 | 5.5 ms | 55.3 ms | 10.06x | 48.8 MiB | 204.7 MiB |
+| function-no-fix-sc2 | 100 | 315.8 ms | 862.0 ms | 2.73x | 133.0 MiB | 475.7 MiB |
+| 2-regular-graph-sc2 | 100 | 29.3 ms | 49.5 ms | 1.69x | 55.9 MiB | 202.3 MiB |
+| 2-regular-directed-graph | 20 | 587.1 ms | 3.62 s | 6.17x | 159.2 MiB | 1408.4 MiB |
+| 3-regular-2-colored-graph | 60 | 4.37 s | 4.11 s | 0.94x | 839.5 MiB | 1489.1 MiB |
+
+The limit outcomes show a larger difference than the successful-case ratios:
+
+- Both implementations time out on `friends-smokes` at n=40.
+- FO2 times out on `nonisolated_graph` at n=100; C2 WMS finishes in 10.67 s.
+- FO2 exceeds 4 GiB on directed 2-regular n=40; C2 WMS finishes in 14.58 s
+  using 2.49 GiB and reaches the 100-second timeout at n=60.
+- FO2 exceeds 4 GiB on 3-regular 2-colored n=80; C2 WMS finishes n=100 in
+  54.42 s using 3.89 GiB.
+
+FO2's baseline RSS is around 190-210 MiB versus 47-58 MiB for C2 WMS. Across
+successful large adjustable cases, FO2 usually uses 1.7-4.2x as much memory;
+directed 2-regular n=20 reaches 8.85x.
+
+Sampling is mixed on ordinary models. FO2's 20-sample batch is sometimes
+10-60% faster, notably on regular colored graphs, while C2 WMS is usually faster
+on simple permutation/graph cases. These times are not equivalent algorithms:
+FO2 converts exact alias probabilities to `float64`, whereas C2 WMS keeps exact
+integer/rational draws. C2 WMS also retains runtime caches across API calls.
+
+Stable roommates strongly favors C2 WMS at the high end. For `stmu_5_32`,
+compile time is 8.09 s versus 20.72 s, peak RSS is 920 MiB versus 3.73 GiB, and
+the amortized batch latency is 0.57 ms versus 49.99 ms per sample. FO2 spends
+about 958 ms constructing and producing a standalone first sample because its
+large alias/cache set is rebuilt for each public sampling call.
+
 ## Large-domain follow-up
 
 The adjustable models were rerun at domain sizes 20, 40, 60, 80, and 100. Of 40

@@ -32,6 +32,12 @@ uv run python benchmarks/run_benchmarks.py \
 uv run python benchmarks/run_benchmarks.py \
   --sizes 20,40,60,80,100 --samples 20 --timeout 100 --memory-gib 4 \
   --output benchmarks/results/comparison.json
+
+# Run the same source models through lifted_sampling_fo2.
+uv run python benchmarks/run_benchmarks.py \
+  --engine fo2 --fo2-repo /path/to/lifted_sampling_fo2 \
+  --sizes 20,40,60,80,100 --samples 20 --timeout 100 --memory-gib 4 \
+  --output benchmarks/results/fo2-comparison.json
 ```
 
 Each successful row reports:
@@ -41,6 +47,8 @@ Each successful row reports:
 - `preprocess_ms`: parse plus compile.
 - `first_sample_ms`: first sample, including lazy runtime cache construction.
 - `warm_*`: subsequent sample latency and throughput.
+- `batch_*`: for the FO2 engine, latency of one public 20-sample batch. Its
+  aliases are reused within that batch but not across API calls.
 - `peak_rss_mib`: peak resident set size reported by the worker process.
 
 JSON metadata and raw results are written after every case. A flat CSV file is

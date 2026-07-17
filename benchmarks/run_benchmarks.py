@@ -114,6 +114,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--samples", type=_positive_int, default=20)
     parser.add_argument("--timeout", type=_positive_float, default=100.0)
     parser.add_argument("--memory-gib", type=_positive_float, default=4.0)
+    parser.add_argument("--engine", choices=("c2", "fo2"), default="c2")
+    parser.add_argument(
+        "--fo2-repo",
+        type=Path,
+        help="lifted_sampling_fo2 checkout; required with --engine fo2",
+    )
     parser.add_argument(
         "--include",
         action="append",
@@ -204,47 +210,11 @@ def _worker(args: argparse.Namespace) -> int:
         if args.domain_size is not None:
             source = _replace_domain(source, args.domain_size)
 
-        from wfomc import parse_problem
-
-        from c2_wms import compile_sampler
-
-        parse_started = perf_counter()
-        problem = parse_problem(source)
-        result["parse_ms"] = (perf_counter() - parse_started) * 1000
-        result["domain_size"] = len(problem.domain)
-        if args.domain_size is not None and len(problem.domain) != args.domain_size:
-            raise ValueError(
-                f"parsed domain size {len(problem.domain)} does not match {args.domain_size}"
-            )
-
-        compile_started = perf_counter()
-        sampler = compile_sampler(problem, seed=42)
-        result["compile_ms"] = (perf_counter() - compile_started) * 1000
-        result["preprocess_ms"] = result["parse_ms"] + result["compile_ms"]
-
-        with sampler:
-            first_started = perf_counter()
-            sampler.sample()
-            result["first_sample_ms"] = (perf_counter() - first_started) * 1000
-
-            warm_ms: list[float] = []
-            for _ in range(args.samples):
-                sample_started = perf_counter()
-                sampler.sample()
-                warm_ms.append((perf_counter() - sample_started) * 1000)
-
-        result.update(
-            {
-                "status": "ok",
-                "warm_total_ms": sum(warm_ms),
-                "warm_mean_ms": statistics.fmean(warm_ms),
-                "warm_p50_ms": statistics.median(warm_ms),
-                "warm_p95_ms": _percentile(warm_ms, 0.95),
-                "warm_min_ms": min(warm_ms),
-                "warm_max_ms": max(warm_ms),
-                "warm_samples_per_second": 1000 / statistics.fmean(warm_ms),
-            }
-        )
+        result["engine"] = args.engine
+        if args.engine == "fo2":
+            _benchmark_fo2(source, args, result)
+        else:
+            _benchmark_c2(source, args, result)
     except MemoryError as exc:
         result.update(status="oom", error=f"{type(exc).__name__}: {exc}")
     except Exception as exc:  # noqa: BLE001 - benchmark must record each failed case.
@@ -256,11 +226,101 @@ def _worker(args: argparse.Namespace) -> int:
     return 0 if result["status"] == "ok" else 1
 
 
+def _check_domain(problem, requested_domain_size: int | None) -> int:
+    domain_size = len(problem.domain)
+    if requested_domain_size is not None and domain_size != requested_domain_size:
+        raise ValueError(f"parsed domain size {domain_size} does not match {requested_domain_size}")
+    return domain_size
+
+
+def _benchmark_c2(source: str, args: argparse.Namespace, result: dict[str, Any]) -> None:
+    from wfomc import parse_problem
+
+    from c2_wms import compile_sampler
+
+    parse_started = perf_counter()
+    problem = parse_problem(source)
+    result["parse_ms"] = (perf_counter() - parse_started) * 1000
+    result["domain_size"] = _check_domain(problem, args.domain_size)
+
+    compile_started = perf_counter()
+    sampler = compile_sampler(problem, seed=42)
+    result["compile_ms"] = (perf_counter() - compile_started) * 1000
+    result["preprocess_ms"] = result["parse_ms"] + result["compile_ms"]
+
+    with sampler:
+        first_started = perf_counter()
+        sampler.sample()
+        result["first_sample_ms"] = (perf_counter() - first_started) * 1000
+
+        warm_ms: list[float] = []
+        for _ in range(args.samples):
+            sample_started = perf_counter()
+            sampler.sample()
+            warm_ms.append((perf_counter() - sample_started) * 1000)
+
+    result.update(
+        {
+            "status": "ok",
+            "warm_total_ms": sum(warm_ms),
+            "warm_mean_ms": statistics.fmean(warm_ms),
+            "warm_p50_ms": statistics.median(warm_ms),
+            "warm_p95_ms": _percentile(warm_ms, 0.95),
+            "warm_min_ms": min(warm_ms),
+            "warm_max_ms": max(warm_ms),
+            "warm_samples_per_second": 1000 / statistics.fmean(warm_ms),
+        }
+    )
+
+
+def _benchmark_fo2(source: str, args: argparse.Namespace, result: dict[str, Any]) -> None:
+    import numpy as np
+    from loguru import logger
+    from wfomc.algo import incremental_wfomc3, incremental_wfoms3
+    from wfomc.context import IncrementalWFOMC3Context
+    from wfomc.parser.wfomcs_parser import parse
+    from wfomc.utils import MultinomialCoefficients
+
+    logger.disable("wfomc")
+    parse_started = perf_counter()
+    problem = parse(source)
+    result["parse_ms"] = (perf_counter() - parse_started) * 1000
+    result["domain_size"] = _check_domain(problem, args.domain_size)
+
+    MultinomialCoefficients.setup(result["domain_size"])
+    context_started = perf_counter()
+    context = IncrementalWFOMC3Context(problem)
+    result["context_ms"] = (perf_counter() - context_started) * 1000
+    dp_started = perf_counter()
+    _mass, sample_data = incremental_wfomc3(context)
+    result["dp_ms"] = (perf_counter() - dp_started) * 1000
+    result["compile_ms"] = result["context_ms"] + result["dp_ms"]
+    result["preprocess_ms"] = result["parse_ms"] + result["compile_ms"]
+
+    np.random.seed(42)
+    first_started = perf_counter()
+    incremental_wfoms3(context, sample_data, 1, False)
+    result["first_sample_ms"] = (perf_counter() - first_started) * 1000
+
+    np.random.seed(43)
+    batch_started = perf_counter()
+    incremental_wfoms3(context, sample_data, args.samples, False)
+    result["batch_total_ms"] = (perf_counter() - batch_started) * 1000
+    result["batch_mean_ms"] = result["batch_total_ms"] / args.samples
+    result["batch_samples_per_second"] = 1000 / result["batch_mean_ms"]
+    result["status"] = "ok"
+
+
 def _worker_command(case: BenchmarkCase, args: argparse.Namespace) -> list[str]:
+    interpreter = sys.executable
+    if args.engine == "fo2":
+        interpreter = str(args.fo2_repo / ".venv/bin/python")
     command = [
-        sys.executable,
+        interpreter,
         str(Path(__file__).resolve()),
         "--worker",
+        "--engine",
+        args.engine,
         "--model",
         case.model,
         "--path",
@@ -378,6 +438,8 @@ def _write_results(
             "memory_gib": args.memory_gib,
             "warm_samples": args.samples,
             "sizes": args.sizes,
+            "engine": args.engine,
+            "fo2_repo": str(args.fo2_repo) if args.fo2_repo is not None else None,
             "cases": [
                 {**asdict(case), "path": str(case.path.relative_to(REPOSITORY))} for case in cases
             ],
@@ -401,6 +463,11 @@ def _write_results(
         "warm_p50_ms",
         "warm_p95_ms",
         "warm_samples_per_second",
+        "context_ms",
+        "dp_ms",
+        "batch_total_ms",
+        "batch_mean_ms",
+        "batch_samples_per_second",
         "peak_rss_mib",
         "wall_ms",
         "samples",
@@ -413,6 +480,12 @@ def _write_results(
 
 
 def _main(args: argparse.Namespace) -> int:
+    if args.engine == "fo2":
+        if args.fo2_repo is None:
+            raise SystemExit("--fo2-repo is required with --engine fo2")
+        interpreter = args.fo2_repo / ".venv/bin/python"
+        if not interpreter.is_file():
+            raise SystemExit(f"FO2 interpreter does not exist: {interpreter}")
     specs = _selected_specs(args.include)
     cases = _cases(specs, args.sizes)
     if args.list:
