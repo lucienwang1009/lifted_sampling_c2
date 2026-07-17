@@ -1,5 +1,6 @@
 import pytest
 from wfomc import parse_problem
+from wfomc.fol import a, b
 
 import c2_wms.pair_sampling as pair_sampling
 from c2_wms import compile_sampler
@@ -13,7 +14,7 @@ def _anonymous_sample(source: str):
 
 def _source_truth(pair_sampler, mask, predicate, terms):
     index = pair_sampler._source_binary_indices[(predicate.name, predicate.arity)]
-    bit = 2 * index if terms == (pair_sampler.b, pair_sampler.a) else 2 * index + 1
+    bit = 2 * index if terms == (b, a) else 2 * index + 1
     return bool(mask & (1 << bit))
 
 
@@ -31,14 +32,10 @@ domain = 3
     for request in anonymous.pair_requests:
         source_mask = pair_sampler.sample_mask(request)
         predicate = anonymous.trace.counting_state.projected_predicates[0]
-        assert _source_truth(
-            pair_sampler, source_mask, predicate, (pair_sampler.a, pair_sampler.b)
-        ) == bool(
+        assert _source_truth(pair_sampler, source_mask, predicate, (a, b)) == bool(
             request.projection_mask & 0b10
         )
-        assert _source_truth(
-            pair_sampler, source_mask, predicate, (pair_sampler.b, pair_sampler.a)
-        ) == bool(
+        assert _source_truth(pair_sampler, source_mask, predicate, (b, a)) == bool(
             request.projection_mask & 0b01
         )
     assert pair_sampler.cnf is None
@@ -109,8 +106,8 @@ domain = 2
             if predicate.name == "S"
         )
         for left, right, bit in (
-            (pair_sampler.a, pair_sampler.b, 1),
-            (pair_sampler.b, pair_sampler.a, 0),
+            (a, b, 1),
+            (b, a, 0),
         ):
             marker = _source_truth(pair_sampler, source_mask, r_pred, (left, right)) and (
                 _source_truth(pair_sampler, source_mask, s_pred, (right, left))
@@ -135,8 +132,8 @@ domain = 2
     request = anonymous.pair_requests[0]
     source_mask = pair_sampler.sample_mask(request)
     for left, right, bit in (
-        (pair_sampler.a, pair_sampler.b, 1),
-        (pair_sampler.b, pair_sampler.a, 0),
+        (a, b, 1),
+        (b, a, 0),
     ):
         r_pred = next(
             predicate
@@ -179,7 +176,7 @@ domain = 2
             pair_sampler,
             pair_sampler.sample_mask(request),
             s_predicate,
-            (pair_sampler.a, pair_sampler.b),
+            (a, b),
         )
         for _ in range(draws)
     )

@@ -47,10 +47,20 @@ def _model_record(sample) -> dict[str, object]:
     }
 
 
+def _non_negative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be non-negative")
+    return parsed
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Exact lifted sampling for general C2")
     parser.add_argument("--input", "-i", required=True)
-    parser.add_argument("--samples", "-n", type=int, default=1)
+    parser.add_argument("--samples", "-n", type=_non_negative_int, default=1)
     parser.add_argument("--seed", type=int)
     parser.add_argument(
         "-v",
@@ -101,10 +111,14 @@ def main() -> None:
         len(problem.declared_predicate_names()),
         (perf_counter() - parse_started) * 1000,
     )
-    output = (
-        nullcontext(sys.stdout) if args.output is None else args.output.open("w", encoding="utf-8")
-    )
-    with output as stream, compile_sampler(problem, seed=args.seed) as sampler:
+    with (
+        compile_sampler(problem, seed=args.seed) as sampler,
+        (
+            nullcontext(sys.stdout)
+            if args.output is None
+            else args.output.open("w", encoding="utf-8")
+        ) as stream,
+    ):
         for index, sample in enumerate(sampler.sample_many(args.samples), start=1):
             if args.validate:
                 try:

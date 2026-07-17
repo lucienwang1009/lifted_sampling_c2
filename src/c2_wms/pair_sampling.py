@@ -313,7 +313,6 @@ class _EnumeratedDistribution:
     """A small conditioned pair distribution enumerated exactly by SAT."""
 
     def __init__(self, sampler: PairSampler, choices, weights):
-        self.sampler = sampler
         self.choices = tuple(choices)
         self.weights = tuple(weights)
         self.coefficients = CoefficientCache(len(sampler.trace.arithmetic.symbolic_variables))
@@ -341,16 +340,9 @@ class _EnumeratedDistribution:
             self._aliases[degree] = table
         return table
 
-    def sample(self, degree: Degree) -> int:
-        table = self.table(degree)
-        return table.sample(self.sampler.rng)
-
 
 class PairSampler:
     """Sample source-level pair masks from exact conditioned pair factors."""
-
-    a = a
-    b = b
 
     def __init__(self, trace, rng: RandRange, source_keys, *, validate_masses: bool = True):
         self.trace = trace
@@ -378,9 +370,7 @@ class PairSampler:
             (key.name, key.arity): index for index, key in enumerate(source_binary_keys)
         }
         self.source_actions = tuple(
-            action
-            for key in source_binary_keys
-            for action in ((key, True), (key, False))
+            action for key in source_binary_keys for action in ((key, True), (key, False))
         )
         self.cnf: TseitinCNF | None = None
         self._source_variable_bits: tuple[tuple[int, int], ...] = ()
@@ -389,7 +379,6 @@ class PairSampler:
         ] = {}
         self._condition_kernels: dict[tuple[int, int, int, Degree], int | ExactAliasTable] = {}
         self._direct_cache: dict[tuple[int, int, int], tuple[int, object]] = {}
-        self._coefficients = CoefficientCache(len(trace.arithmetic.symbolic_variables))
         self._expected = self._expected_masses()
         if self._is_direct and self.validate_masses:
             for left, right, mask in self._expected:
@@ -471,9 +460,7 @@ class PairSampler:
             bit = projection & -projection
             projected_bit = bit.bit_length() - 1
             predicate = self.trace.counting_state.projected_predicates[projected_bit // 2]
-            source_index = self._source_binary_indices.get(
-                (predicate.name, predicate.arity)
-            )
+            source_index = self._source_binary_indices.get((predicate.name, predicate.arity))
             if source_index is not None:
                 source_mask |= 1 << (2 * source_index + projected_bit % 2)
             projection ^= bit

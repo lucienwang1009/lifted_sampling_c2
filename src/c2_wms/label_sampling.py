@@ -35,7 +35,6 @@ class LabelSampler:
     """Sample profile-to-cell allocations and bind real domain constants."""
 
     def __init__(self, problem, rng: RandRange):
-        self.problem = problem
         self.rng = rng
         self.domain = tuple(sorted(problem.domain, key=str))
         by_constant: dict[object, set[tuple[str, int, bool]]] = {
@@ -45,12 +44,13 @@ class LabelSampler:
             by_constant[literal.constant].add(
                 (*_predicate_key(literal.predicate), literal.positive)
             )
-        self.constants_by_profile: dict[frozenset[tuple[str, int, bool]], tuple[object, ...]] = {}
         mutable: dict[frozenset[tuple[str, int, bool]], list[object]] = {}
         for constant in self.domain:
             key = frozenset(by_constant[constant])
             mutable.setdefault(key, []).append(constant)
-        self.constants_by_profile = {key: tuple(values) for key, values in mutable.items()}
+        self.constants_by_profile: dict[frozenset[tuple[str, int, bool]], tuple[object, ...]] = {
+            key: tuple(values) for key, values in mutable.items()
+        }
         self._masses: dict[tuple[int, int, tuple[int, ...]], int] = {}
         self._transitions: dict[
             tuple[int, int, tuple[int, ...]],

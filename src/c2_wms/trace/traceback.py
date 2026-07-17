@@ -22,11 +22,6 @@ def _choice_kind(key) -> object:
     return type(key).__name__
 
 
-def _subtract_configs(total, part):
-    result = tuple(a - b for a, b in zip(total, part, strict=True))
-    return None if any(value < 0 for value in result) else result
-
-
 @dataclass(slots=True)
 class _Element:
     identifier: int

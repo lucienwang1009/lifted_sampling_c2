@@ -1,6 +1,6 @@
 from flint import fmpq, fmpq_mpoly_ctx, fmpq_poly
 
-from c2_wms.arithmetic import CoefficientCache, add_degrees, sparse_terms
+from c2_wms.arithmetic import CoefficientCache, sparse_terms
 
 
 def test_sparse_terms_handles_scalar_and_univariate_values():
@@ -30,4 +30,3 @@ def test_sparse_terms_preserves_multivariate_degree_order():
         (1, 0): fmpq(2),
         (0, 2): fmpq(3),
     }
-    assert add_degrees((1, 0), (0, 2)) == (1, 2)

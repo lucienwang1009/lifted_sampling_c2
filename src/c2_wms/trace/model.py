@@ -32,7 +32,6 @@ class TargetTrace:
 
 @dataclass(slots=True)
 class DomainTraceNode:
-    config: Config
     targets: tuple[TargetTrace, ...]
 
 

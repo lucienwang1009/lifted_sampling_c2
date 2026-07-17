@@ -11,16 +11,6 @@ from flint import fmpq, fmpq_mpoly, fmpq_poly, fmpz
 Degree: TypeAlias = tuple[int, ...]
 
 
-def add_degrees(left: Degree, right: Degree) -> Degree:
-    if not left:
-        return right
-    if not right:
-        return left
-    if len(left) != len(right):
-        raise ValueError("degree vectors must have the same dimension")
-    return tuple(a + b for a, b in zip(left, right, strict=True))
-
-
 def subtract_degrees(total: Degree, part: Degree) -> Degree | None:
     if not total:
         return () if not part else None

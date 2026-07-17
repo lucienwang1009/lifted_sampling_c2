@@ -24,6 +24,42 @@ def test_cli_verbosity_flags_select_info_and_debug():
     assert _parser().parse_args(["--input", "model.wfomcs", "-vv"]).verbose == 2
 
 
+def test_cli_rejects_negative_sample_count(capsys):
+    with pytest.raises(SystemExit) as raised:
+        _parser().parse_args(["--input", "model.wfomcs", "--samples", "-1"])
+
+    assert raised.value.code == 2
+    assert "non-negative" in capsys.readouterr().err
+
+
+def test_cli_compile_failure_preserves_existing_output(tmp_path, monkeypatch):
+    problem = tmp_path / "model.wfomcs"
+    output = tmp_path / "samples.jsonl"
+    _write_problem(problem)
+    output.write_text("existing output\n", encoding="utf-8")
+
+    def fail_compilation(*_args, **_kwargs):
+        raise RuntimeError("compile failed")
+
+    monkeypatch.setattr(sampler_module, "compile_sampler", fail_compilation)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "wfoms",
+            "--input",
+            str(problem),
+            "--output",
+            str(output),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="compile failed"):
+        main()
+
+    assert output.read_text(encoding="utf-8") == "existing output\n"
+
+
 def test_cli_writes_complete_models_as_json_lines(tmp_path, monkeypatch, capsys):
     problem = tmp_path / "model.wfomcs"
     output = tmp_path / "samples.jsonl"

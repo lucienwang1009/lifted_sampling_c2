@@ -109,9 +109,7 @@ def project_structure(
             if action is not None:
                 key, reverse = action
                 left, right = request.left, request.right
-                terms = (
-                    (labels[right], labels[left]) if reverse else (labels[left], labels[right])
-                )
+                terms = (labels[right], labels[left]) if reverse else (labels[left], labels[right])
                 relations[key].add(terms)
             mask ^= bit
     return SampledStructure(

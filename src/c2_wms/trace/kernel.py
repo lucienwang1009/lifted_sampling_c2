@@ -145,7 +145,6 @@ class _TraceKernel:
         arithmetic,
         max_trace_states,
     ):
-        self.t_update_dict = t_update_dict
         self.space = space
         self.accepting_states = accepting_states
         self.has_linear_order = has_linear_order
@@ -237,7 +236,7 @@ class _TraceKernel:
             )
 
         self.values[config] = total
-        self.nodes[config] = DomainTraceNode(config, tuple(target_traces))
+        self.nodes[config] = DomainTraceNode(tuple(target_traces))
         state_count = len(self.values)
         if self._progress_enabled and state_count >= self._next_progress:
             logger.debug(
